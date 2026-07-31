@@ -81,6 +81,9 @@ def initialize_state():
         "armor": "旅人斗篷",
         "battle_turn": 0,
         "skill_cooldown": 0,
+        "story_stage": "序章：圖書館的異常",
+        "magic_book_found": False,
+        "ending": "",
         "combat_message": "尚未進入戰鬥",
         "pending_action": None,
         "load_notice": "",
@@ -112,12 +115,25 @@ def decide_state(player_text):
 
 
 def update_quest():
-    """根據關係值更新任務或敵對事件。"""
+    """依關係、劇情物品與結局更新目前任務。"""
+
+    if st.session_state.ending:
+        st.session_state.quest = f"結局完成：{st.session_state.ending}"
+        return
+
+    if st.session_state.magic_book_found:
+        if st.session_state.affinity >= 60:
+            st.session_state.quest = "終章任務：與艾琳封印魔法書"
+        elif st.session_state.affinity <= -20:
+            st.session_state.quest = "敵對事件：爭奪封印魔法書"
+        else:
+            st.session_state.quest = "第二章：魔法書等待你的選擇"
+        return
 
     if st.session_state.affinity >= 60:
-        st.session_state.quest = "盟友任務：封印魔法書"
+        st.session_state.quest = "盟友任務：尋找封印魔法書"
     elif st.session_state.affinity >= 20:
-        st.session_state.quest = "艾琳開始信任玩家"
+        st.session_state.quest = "任務解鎖：請與艾琳一起搜尋魔法書"
     elif st.session_state.affinity <= -60:
         st.session_state.quest = "敵對事件：守護者追捕令"
     elif st.session_state.affinity <= -20:
@@ -126,11 +142,63 @@ def update_quest():
         st.session_state.quest = "尚未解鎖"
 
 
+def handle_story_action(player_turn):
+    """處理任務按鈕，讓關係值決定合作或敵對的劇情分支。"""
+
+    if player_turn not in {"search_book", "seal_book", "steal_book"}:
+        return ""
+
+    if st.session_state.ending:
+        return f"🏁 劇情已完成：{st.session_state.ending}。"
+
+    if player_turn == "search_book":
+        if st.session_state.magic_book_found:
+            return "📜 你已經找到封印魔法書。"
+        if st.session_state.affinity < 20:
+            st.session_state.emotion = "警戒 😠"
+            st.session_state.action = "拒絕交出圖書館線索"
+            st.session_state.affinity = max(-100, st.session_state.affinity - 5)
+            update_quest()
+            return "📜 艾琳尚未信任你，不會帶你進入封存書庫。"
+
+        st.session_state.magic_book_found = True
+        st.session_state.story_stage = "第二章：封印的抉擇"
+        st.session_state.emotion = "好奇 🤔"
+        st.session_state.action = "與玩家研究封印魔法書"
+        update_quest()
+        return "📜 你與艾琳在封存書庫找到了一本散發微光的魔法書。"
+
+    if player_turn == "seal_book":
+        if not st.session_state.magic_book_found:
+            return "✨ 你還沒有找到魔法書，無法進行封印。"
+        if st.session_state.affinity < 60:
+            return "✨ 艾琳仍不願把封印儀式交給你，需要更高的信任。"
+
+        st.session_state.story_stage = "結局：守護者盟約"
+        st.session_state.ending = "守護者盟約（合作結局）"
+        st.session_state.emotion = "開心 😊"
+        st.session_state.action = "與玩家共同完成封印儀式"
+        st.session_state.affinity = min(100, st.session_state.affinity + 10)
+        update_quest()
+        return "✨ 封印儀式完成。艾琳邀請你成為圖書館的新任盟友。"
+
+    if not st.session_state.magic_book_found:
+        return "📕 你還沒有找到魔法書，無法奪取它。"
+
+    st.session_state.story_stage = "結局：圖書館的叛徒"
+    st.session_state.ending = "圖書館的叛徒（敵對結局）"
+    st.session_state.emotion = "生氣 😡"
+    st.session_state.action = "啟動守衛追捕玩家"
+    st.session_state.affinity = -100
+    update_quest()
+    return "📕 你奪走魔法書。艾琳啟動圖書館的守衛封鎖出口。"
+
+
 def create_save_data():
     """整理可攜式 JSON 存檔需要保存的遊戲狀態。"""
 
     return {
-        "save_version": 4,
+        "save_version": 5,
         "messages": st.session_state.messages,
         "emotion": st.session_state.emotion,
         "action": st.session_state.action,
@@ -143,6 +211,9 @@ def create_save_data():
         "armor": st.session_state.armor,
         "battle_turn": st.session_state.battle_turn,
         "skill_cooldown": st.session_state.skill_cooldown,
+        "story_stage": st.session_state.story_stage,
+        "magic_book_found": st.session_state.magic_book_found,
+        "ending": st.session_state.ending,
         "combat_message": st.session_state.combat_message,
     }
 
@@ -190,6 +261,11 @@ def load_save_data(data):
         0,
         min(2, int(data.get("skill_cooldown", 0))),
     )
+    st.session_state.story_stage = str(
+        data.get("story_stage", "序章：圖書館的異常")
+    )
+    st.session_state.magic_book_found = bool(data.get("magic_book_found", False))
+    st.session_state.ending = str(data.get("ending", ""))
     st.session_state.combat_message = str(
         data.get("combat_message", "尚未進入戰鬥")
     )
@@ -460,6 +536,9 @@ def create_ai_decision(player_message):
 - 目前行為：{st.session_state.action}
 - 與玩家的關係值：{st.session_state.affinity}，範圍是 -100 到 100
 - 目前事件：{st.session_state.quest}
+- 劇情章節：{st.session_state.story_stage}
+- 是否已找到封印魔法書：{st.session_state.magic_book_found}
+- 目前結局：{st.session_state.ending or "尚未決定"}
 - 艾琳生命值：{st.session_state.npc_hp} / 100
 - 玩家生命值：{st.session_state.player_hp} / 100
 - 玩家武器：{st.session_state.weapon}，額外攻擊傷害 +{WEAPONS[st.session_state.weapon]["attack_bonus"]}
@@ -618,6 +697,18 @@ with st.sidebar:
     st.progress(progress_value)
     st.write(f"事件狀態：{st.session_state.quest}")
 
+    st.divider()
+    st.subheader("劇情進度")
+    st.write(f"目前章節：{st.session_state.story_stage}")
+    st.write(
+        "封印魔法書："
+        + ("已找到 📜" if st.session_state.magic_book_found else "尚未找到")
+    )
+    if st.session_state.ending:
+        st.success(f"已達成結局：{st.session_state.ending}")
+    else:
+        st.caption("先取得艾琳的信任，再從對話框上方選擇劇情行動。")
+
     if st.button("清除對話並重置"):
         st.session_state.messages = []
         st.session_state.emotion = "平靜 😐"
@@ -633,6 +724,9 @@ with st.sidebar:
         st.session_state.armor = "旅人斗篷"
         st.session_state.battle_turn = 0
         st.session_state.skill_cooldown = 0
+        st.session_state.story_stage = "序章：圖書館的異常"
+        st.session_state.magic_book_found = False
+        st.session_state.ending = ""
         st.session_state.combat_message = "尚未進入戰鬥"
         st.session_state.pending_action = None
         st.session_state.load_notice = ""
@@ -680,6 +774,43 @@ st.subheader("與艾琳交談")
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
+
+st.caption("劇情行動：關係值會決定你能走向合作或敵對結局。")
+story_col1, story_col2, story_col3 = st.columns(3)
+story_finished = bool(st.session_state.ending)
+
+if story_col1.button(
+    "📜 搜尋魔法書",
+    disabled=st.session_state.magic_book_found or story_finished,
+    use_container_width=True,
+):
+    st.session_state.pending_action = {
+        "type": "search_book",
+        "message": "我希望與你一起搜尋封印魔法書。",
+    }
+    st.rerun()
+
+if story_col2.button(
+    "✨ 封印魔法書",
+    disabled=not st.session_state.magic_book_found or story_finished,
+    use_container_width=True,
+):
+    st.session_state.pending_action = {
+        "type": "seal_book",
+        "message": "我願意與你完成封印魔法書的儀式。",
+    }
+    st.rerun()
+
+if story_col3.button(
+    "📕 奪取魔法書",
+    disabled=not st.session_state.magic_book_found or story_finished,
+    use_container_width=True,
+):
+    st.session_state.pending_action = {
+        "type": "steal_book",
+        "message": "我奪取封印魔法書並拒絕交還。",
+    }
+    st.rerun()
 
 st.caption("遊戲動作：按鈕位於輸入框上方，按下後會自動送出指令。")
 action_col1, action_col2, action_col3, action_col4 = st.columns(4)
@@ -729,6 +860,9 @@ if st.session_state.pending_action:
 
 if player_message:
     action_result, action_is_available = prepare_player_action(player_turn)
+    story_result = handle_story_action(player_turn)
+    if story_result:
+        action_result = "\n\n".join(filter(None, [action_result, story_result]))
     st.session_state.messages.append(
         {
             "role": "user",
