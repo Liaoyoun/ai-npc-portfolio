@@ -521,49 +521,20 @@ def handle_story_action(player_turn):
     return f"{item_icon} {story['hostile_result']}"
 
 
-def create_save_data():
-    """整理可攜式 JSON 存檔需要保存的遊戲狀態。"""
+def clamp_integer(value, default, minimum, maximum):
+    """讀取存檔數值時限制範圍，避免錯誤資料破壞遊戲狀態。"""
 
-    save_active_npc_state()
-
-    return {
-        "save_version": 7,
-        "active_npc": st.session_state.active_npc,
-        "messages": st.session_state.messages,
-        "emotion": st.session_state.emotion,
-        "action": st.session_state.action,
-        "affinity": st.session_state.affinity,
-        "quest": st.session_state.quest,
-        "npc_hp": st.session_state.npc_hp,
-        "player_hp": st.session_state.player_hp,
-        "potions": st.session_state.potions,
-        "weapon": st.session_state.weapon,
-        "armor": st.session_state.armor,
-        "inventory": st.session_state.inventory,
-        "battle_turn": st.session_state.battle_turn,
-        "skill_cooldown": st.session_state.skill_cooldown,
-        "story_stage": st.session_state.story_stage,
-        "magic_book_found": st.session_state.magic_book_found,
-        "ending": st.session_state.ending,
-        "combat_message": st.session_state.combat_message,
-    }
+    try:
+        return max(minimum, min(maximum, int(value)))
+    except (TypeError, ValueError):
+        return default
 
 
-def load_save_data(data):
-    """驗證並載入 JSON 存檔，避免錯誤數值破壞遊戲狀態。"""
+def clean_messages(messages):
+    """只保留格式正確且最近的對話記憶。"""
 
-    if not isinstance(data, dict):
-        raise ValueError("存檔格式不是 JSON 物件")
-
-    messages = data.get("messages", [])
     if not isinstance(messages, list):
-        raise ValueError("對話記憶格式不正確")
-
-    save_active_npc_state()
-    saved_npc = str(data.get("active_npc", "艾琳"))
-    if saved_npc not in NPC_PROFILES:
-        saved_npc = "艾琳"
-    st.session_state.active_npc = saved_npc
+        return []
 
     valid_messages = []
     for message in messages[-30:]:
@@ -573,19 +544,144 @@ def load_save_data(data):
         content = message.get("content")
         if role in {"user", "assistant"} and isinstance(content, str):
             valid_messages.append({"role": role, "content": content})
+    return valid_messages
 
-    st.session_state.messages = valid_messages
-    st.session_state.emotion = str(data.get("emotion", "平靜 😐"))
-    st.session_state.action = str(data.get("action", "觀察玩家"))
-    st.session_state.affinity = max(-100, min(100, int(data.get("affinity", 0))))
-    st.session_state.npc_hp = max(0, min(100, int(data.get("npc_hp", 100))))
-    st.session_state.player_hp = max(
+
+def normalise_npc_state(raw_state, npc_key):
+    """將新舊存檔中的單一 NPC 狀態整理為安全、完整的格式。"""
+
+    default_state = create_default_npc_state(npc_key)
+    if not isinstance(raw_state, dict):
+        return default_state
+
+    state = copy.deepcopy(default_state)
+    state["messages"] = clean_messages(raw_state.get("messages", []))
+    state["emotion"] = str(raw_state.get("emotion", state["emotion"]))
+    state["action"] = str(raw_state.get("action", state["action"]))
+    state["ai_status"] = "規則模式"
+    state["connection_warning"] = False
+    state["affinity"] = clamp_integer(
+        raw_state.get("affinity", 0),
         0,
-        min(100, int(data.get("player_hp", 100))),
+        -100,
+        100,
     )
-    st.session_state.potions = max(0, min(9, int(data.get("potions", 3))))
-    saved_weapon = str(data.get("weapon", "練習長劍"))
-    saved_armor = str(data.get("armor", "旅人斗篷"))
+    state["quest"] = str(raw_state.get("quest", state["quest"]))
+    state["npc_hp"] = clamp_integer(
+        raw_state.get("npc_hp", 100),
+        100,
+        0,
+        100,
+    )
+    state["battle_turn"] = clamp_integer(
+        raw_state.get("battle_turn", 0),
+        0,
+        0,
+        99,
+    )
+    state["skill_cooldown"] = clamp_integer(
+        raw_state.get("skill_cooldown", 0),
+        0,
+        0,
+        2,
+    )
+    state["story_stage"] = str(
+        raw_state.get("story_stage", state["story_stage"])
+    )
+    state["magic_book_found"] = (
+        raw_state.get("magic_book_found") is True
+    )
+    state["ending"] = str(raw_state.get("ending", ""))
+    state["combat_message"] = str(
+        raw_state.get("combat_message", state["combat_message"])
+    )
+    state["pending_action"] = None
+    return state
+
+
+def apply_npc_state_to_screen(npc_key):
+    """把指定 NPC 的已保存狀態載入目前 Streamlit 畫面。"""
+
+    for key, value in st.session_state.npc_states[npc_key].items():
+        st.session_state[key] = copy.deepcopy(value)
+
+
+def create_save_data():
+    """建立包含所有 NPC 與玩家共用狀態的完整世界存檔。"""
+
+    save_active_npc_state()
+    npc_states = copy.deepcopy(st.session_state.npc_states)
+    for npc_state in npc_states.values():
+        npc_state["pending_action"] = None
+
+    return {
+        "save_version": 8,
+        "active_npc": st.session_state.active_npc,
+        "npc_states": npc_states,
+        "player_state": {
+            "player_hp": st.session_state.player_hp,
+            "potions": st.session_state.potions,
+            "weapon": st.session_state.weapon,
+            "armor": st.session_state.armor,
+            "inventory": st.session_state.inventory,
+        },
+    }
+
+
+def load_save_data(data):
+    """載入完整世界存檔，並相容舊版只存目前 NPC 的存檔。"""
+
+    if not isinstance(data, dict):
+        raise ValueError("存檔格式不是 JSON 物件")
+
+    save_active_npc_state()
+    saved_npc = str(data.get("active_npc", "艾琳"))
+    if saved_npc not in NPC_PROFILES:
+        saved_npc = "艾琳"
+
+    raw_npc_states = data.get("npc_states")
+    if isinstance(raw_npc_states, dict):
+        st.session_state.npc_states = {
+            npc_key: normalise_npc_state(
+                raw_npc_states.get(npc_key),
+                npc_key,
+            )
+            for npc_key in NPC_PROFILES
+        }
+    else:
+        # 版本 7 與更早的存檔只記錄當時正在交談的 NPC。
+        st.session_state.npc_states = {
+            npc_key: create_default_npc_state(npc_key)
+            for npc_key in NPC_PROFILES
+        }
+        legacy_npc_state = {
+            key: data[key] for key in NPC_STATE_KEYS if key in data
+        }
+        st.session_state.npc_states[saved_npc] = normalise_npc_state(
+            legacy_npc_state,
+            saved_npc,
+        )
+
+    st.session_state.active_npc = saved_npc
+    apply_npc_state_to_screen(saved_npc)
+
+    player_state = data.get("player_state", data)
+    if not isinstance(player_state, dict):
+        player_state = {}
+    st.session_state.player_hp = clamp_integer(
+        player_state.get("player_hp", 100),
+        100,
+        0,
+        100,
+    )
+    st.session_state.potions = clamp_integer(
+        player_state.get("potions", 3),
+        3,
+        0,
+        9,
+    )
+    saved_weapon = str(player_state.get("weapon", "練習長劍"))
+    saved_armor = str(player_state.get("armor", "旅人斗篷"))
     st.session_state.weapon = (
         saved_weapon if saved_weapon in WEAPONS else "練習長劍"
     )
@@ -593,7 +689,7 @@ def load_save_data(data):
     valid_reward_ids = {
         reward["id"] for reward in QUEST_REWARDS.values()
     }
-    saved_inventory = data.get("inventory", [])
+    saved_inventory = player_state.get("inventory", [])
     if not isinstance(saved_inventory, list):
         saved_inventory = []
     st.session_state.inventory = []
@@ -604,24 +700,7 @@ def load_save_data(data):
             and reward_id not in st.session_state.inventory
         ):
             st.session_state.inventory.append(reward_id)
-    st.session_state.battle_turn = max(
-        0,
-        min(99, int(data.get("battle_turn", 0))),
-    )
-    st.session_state.skill_cooldown = max(
-        0,
-        min(2, int(data.get("skill_cooldown", 0))),
-    )
-    st.session_state.story_stage = str(
-        data.get("story_stage", NPC_PROFILES[saved_npc]["story"]["intro"])
-    )
-    st.session_state.magic_book_found = bool(data.get("magic_book_found", False))
-    st.session_state.ending = str(data.get("ending", ""))
-    st.session_state.combat_message = str(
-        data.get("combat_message", "尚未進入戰鬥")
-    )
-    st.session_state.ai_status = "規則模式"
-    st.session_state.connection_warning = False
+
     update_quest()
     save_active_npc_state()
 
@@ -1094,27 +1173,17 @@ with st.sidebar:
     else:
         st.caption(f"先取得{profile['name']}的信任，再從對話框上方選擇劇情行動。")
 
-    if st.button(f"清除{profile['name']}的對話並重置遊戲"):
-        st.session_state.messages = []
-        st.session_state.emotion = profile["initial_emotion"]
-        st.session_state.action = profile["initial_action"]
-        st.session_state.ai_status = "規則模式"
-        st.session_state.connection_warning = False
-        st.session_state.affinity = 0
-        st.session_state.quest = "尚未解鎖"
-        st.session_state.npc_hp = 100
+    if st.button("清除所有進度並重置遊戲"):
+        st.session_state.npc_states = {
+            npc_key: create_default_npc_state(npc_key)
+            for npc_key in NPC_PROFILES
+        }
+        apply_npc_state_to_screen(st.session_state.active_npc)
         st.session_state.player_hp = 100
         st.session_state.potions = 3
         st.session_state.weapon = "練習長劍"
         st.session_state.armor = "旅人斗篷"
         st.session_state.inventory = []
-        st.session_state.battle_turn = 0
-        st.session_state.skill_cooldown = 0
-        st.session_state.story_stage = profile["story"]["intro"]
-        st.session_state.magic_book_found = False
-        st.session_state.ending = ""
-        st.session_state.combat_message = "尚未進入戰鬥"
-        st.session_state.pending_action = None
         st.session_state.load_notice = ""
         st.rerun()
 
