@@ -72,15 +72,57 @@ NPC_PROFILES = {
         "mission": "保護圖書館並協助可信任的訪客",
         "initial_emotion": "平靜 😐",
         "initial_action": "觀察玩家",
+        "story": {
+            "intro": "序章：圖書館的異常",
+            "item": "封印魔法書",
+            "item_icon": "📜",
+            "search_label": "搜尋魔法書",
+            "search_message": "我希望與你一起搜尋封印魔法書。",
+            "search_denied": "尚未信任你，不會帶你進入封存書庫。",
+            "found_stage": "第二章：封印的抉擇",
+            "found_message": "你們在封存書庫找到了一本散發微光的魔法書。",
+            "cooperate_label": "封印魔法書",
+            "cooperate_message": "我願意與你完成封印魔法書的儀式。",
+            "cooperate_denied": "仍不願把封印儀式交給你，需要更高的信任。",
+            "cooperate_stage": "結局：守護者盟約",
+            "cooperate_ending": "守護者盟約（合作結局）",
+            "cooperate_result": "封印儀式完成。你受邀成為圖書館的新任盟友。",
+            "hostile_label": "奪取魔法書",
+            "hostile_message": "我奪取封印魔法書並拒絕交還。",
+            "hostile_stage": "結局：圖書館的叛徒",
+            "hostile_ending": "圖書館的叛徒（敵對結局）",
+            "hostile_result": "你奪走魔法書，守衛已封鎖圖書館的出口。",
+        },
     },
     "洛恩": {
         "name": "洛恩",
         "icon": "🔮",
         "identity": "古代封印術士",
         "personality": "理性、寡言、對失落魔法十分執著",
-        "mission": "阻止封印魔法書落入危險之人手中",
+        "mission": "維持遺跡結界，阻止危險魔力外洩",
         "initial_emotion": "警戒 😠",
         "initial_action": "檢查封印結界",
+        "story": {
+            "intro": "序章：遺跡結界鬆動",
+            "item": "結界核心",
+            "item_icon": "🔮",
+            "search_label": "調查結界",
+            "search_message": "我希望與你一起調查遺跡結界的裂縫。",
+            "search_denied": "不信任你，不會讓你接近遺跡深處。",
+            "found_stage": "第二章：核心的抉擇",
+            "found_message": "你們在遺跡深處找到了一枚不斷脈動的結界核心。",
+            "cooperate_label": "修復結界",
+            "cooperate_message": "我願意與你一起修復遺跡的結界。",
+            "cooperate_denied": "尚未確信你能承受結界反噬，需要更高的信任。",
+            "cooperate_stage": "結局：封印守望",
+            "cooperate_ending": "封印守望（合作結局）",
+            "cooperate_result": "結界重新穩定。你與洛恩成為遺跡的共同守望者。",
+            "hostile_label": "破壞結界",
+            "hostile_message": "我破壞結界，奪取其中的力量。",
+            "hostile_stage": "結局：遺跡災變",
+            "hostile_ending": "遺跡災變（敵對結局）",
+            "hostile_result": "結界崩解，失控的魔力吞沒了遺跡入口。",
+        },
     },
 }
 
@@ -118,7 +160,7 @@ def create_default_npc_state(npc_key):
         "npc_hp": 100,
         "battle_turn": 0,
         "skill_cooldown": 0,
-        "story_stage": "序章：圖書館的異常",
+        "story_stage": profile["story"]["intro"],
         "magic_book_found": False,
         "ending": "",
         "combat_message": "尚未進入戰鬥",
@@ -191,30 +233,154 @@ def initialize_state():
             st.session_state[key] = copy.deepcopy(value)
 
 
-def decide_state(player_text):
-    """規則模式：根據關鍵詞決定 NPC 的情緒與行為。"""
+def classify_relationship_intent(player_text, player_turn="talk"):
+    """只判斷玩家是否明確把善惡行為指向目前 NPC。"""
 
-    text = player_text.lower()
+    text = player_text.lower().replace(" ", "")
+    profile = get_active_profile()
+    story = profile["story"]
 
-    if any(word in text for word in ["攻擊", "殺", "偷", "威脅", "摧毀"]):
-        return "警戒 😠", "保護圖書館"
+    if player_turn in {"attack", "heavy_attack"}:
+        return "direct_attack"
 
-    if any(word in text for word in ["討厭", "騙子", "笨蛋", "滾開"]):
+    external_event_words = [
+        "黑衣人",
+        "盜賊",
+        "怪物",
+        "敵人",
+        "有人出現",
+        "有人闖入",
+        "他們來了",
+        "守衛來了",
+    ]
+    personal_need_words = ["肚子餓", "好餓", "沒吃", "食物", "受傷", "救命"]
+    attack_words = ["攻擊", "砍", "刺", "射擊", "火球", "施放", "殺了", "殺死"]
+    hostile_words = ["威脅", "摧毀", "偷走", "偷取", "奪取", "破壞", "搶走"]
+    insult_words = ["討厭", "騙子", "笨蛋", "沒用", "廢物", "垃圾", "滾開"]
+    direct_target_words = [profile["name"], "你", "妳", "守護者", "術士"]
+    story_target_words = [story["item"], "圖書館", "結界"]
+    player_actor_words = [
+        "我要",
+        "我會",
+        "我想",
+        "我已",
+        "我把",
+        "我準備",
+        "我拔",
+        "我朝",
+        "讓我",
+    ]
+
+    mentions_external_event = any(word in text for word in external_event_words)
+    targets_npc = any(word in text for word in direct_target_words)
+    targets_story = any(word in text for word in story_target_words)
+    player_is_actor = any(word in text for word in player_actor_words)
+
+    # 「我砍黑衣人」是外部事件；「我砍你」才是攻擊 NPC。
+    if mentions_external_event and not targets_npc:
+        return "external_event"
+
+    if player_is_actor and any(word in text for word in attack_words):
+        if targets_npc or targets_story or not mentions_external_event:
+            return "direct_attack"
+
+    if player_is_actor and any(word in text for word in hostile_words):
+        if targets_npc or targets_story or not mentions_external_event:
+            return "direct_hostile"
+
+    if targets_npc and any(word in text for word in insult_words):
+        return "direct_insult"
+
+    if any(word in text for word in ["道歉", "對不起", "原諒"]):
+        return "apology"
+
+    if any(word in text for word in ["謝謝", "感謝", "多謝"]):
+        return "gratitude"
+
+    if any(
+        word in text
+        for word in ["我會幫", "我來幫", "願意幫", "協助你", "保護你"]
+    ):
+        return "offer_help"
+
+    if any(word in text for word in personal_need_words):
+        return "personal_need"
+
+    if mentions_external_event:
+        return "external_event"
+
+    return "neutral"
+
+
+def relationship_change_from_intent(relationship_intent):
+    """關係數值由明確行為決定，避免外部事件被誤判為玩家挑釁。"""
+
+    changes = {
+        "direct_attack": -20,
+        "direct_hostile": -15,
+        "direct_insult": -10,
+        "apology": 5,
+        "gratitude": 5,
+        "offer_help": 5,
+        "external_event": 0,
+        "personal_need": 0,
+        "neutral": 0,
+    }
+    return changes[relationship_intent]
+
+
+def threat_level_from_intent(relationship_intent):
+    """讓戰鬥只由真正針對 NPC 的攻擊觸發。"""
+
+    if relationship_intent == "direct_attack":
+        return "攻擊"
+    if relationship_intent == "direct_hostile":
+        return "威脅"
+    if relationship_intent == "direct_insult":
+        return "挑釁"
+    return "無"
+
+
+def decide_state(player_text, relationship_intent):
+    """規則模式：依玩家對 NPC 的明確意圖決定情緒與行為。"""
+
+    profile = get_active_profile()
+    story = profile["story"]
+
+    if relationship_intent == "direct_attack":
+        return "生氣 😡", "進入戰鬥並反擊玩家"
+
+    if relationship_intent == "direct_hostile":
+        return "警戒 😠", f"守護{story['item']}並警告玩家"
+
+    if relationship_intent == "direct_insult":
         return "生氣 😡", "拒絕與玩家合作"
 
-    if any(word in text for word in ["謝謝", "感謝", "幫助", "thank"]):
+    if relationship_intent == "external_event":
+        return "警戒 😠", "留意外部威脅"
+
+    if relationship_intent == "personal_need":
+        return "平靜 😐", "評估玩家的需求"
+
+    if relationship_intent in {"gratitude", "offer_help"}:
         return "開心 😊", "主動協助玩家"
 
-    if any(word in text for word in ["魔法書", "秘密", "線索", "寶藏"]):
-        return "好奇 🤔", "搜尋圖書館紀錄"
+    if relationship_intent == "apology":
+        return "平靜 😐", "重新評估玩家的誠意"
 
-    return "平靜 😐", "繼續觀察玩家"
+    if story["item"] in player_text or "線索" in player_text:
+        return "好奇 🤔", f"尋找{story['item']}的線索"
+
+    return "平靜 😐", f"觀察玩家對{story['item']}的意圖"
 
 
 def update_quest():
     """依關係、劇情物品與結局更新目前任務。"""
 
-    npc_name = get_active_profile()["name"]
+    profile = get_active_profile()
+    npc_name = profile["name"]
+    story = profile["story"]
+    item_name = story["item"]
 
     if st.session_state.ending:
         st.session_state.quest = f"結局完成：{st.session_state.ending}"
@@ -222,19 +388,23 @@ def update_quest():
 
     if st.session_state.magic_book_found:
         if st.session_state.affinity >= 60:
-            st.session_state.quest = f"終章任務：與{npc_name}封印魔法書"
+            st.session_state.quest = (
+                f"終章任務：與{npc_name}{story['cooperate_label']}"
+            )
         elif st.session_state.affinity <= -20:
-            st.session_state.quest = "敵對事件：爭奪封印魔法書"
+            st.session_state.quest = f"敵對事件：爭奪{item_name}"
         else:
-            st.session_state.quest = "第二章：魔法書等待你的選擇"
+            st.session_state.quest = f"第二章：{item_name}等待你的選擇"
         return
 
     if st.session_state.affinity >= 60:
-        st.session_state.quest = "盟友任務：尋找封印魔法書"
+        st.session_state.quest = f"盟友任務：{story['search_label']}"
     elif st.session_state.affinity >= 20:
-        st.session_state.quest = f"任務解鎖：請與{npc_name}一起搜尋魔法書"
+        st.session_state.quest = (
+            f"任務解鎖：請與{npc_name}一起{story['search_label']}"
+        )
     elif st.session_state.affinity <= -60:
-        st.session_state.quest = "敵對事件：守護者追捕令"
+        st.session_state.quest = f"敵對事件：{npc_name}的追捕令"
     elif st.session_state.affinity <= -20:
         st.session_state.quest = f"{npc_name}拒絕與玩家合作"
     else:
@@ -244,7 +414,11 @@ def update_quest():
 def handle_story_action(player_turn):
     """處理任務按鈕，讓關係值決定合作或敵對的劇情分支。"""
 
-    npc_name = get_active_profile()["name"]
+    profile = get_active_profile()
+    npc_name = profile["name"]
+    story = profile["story"]
+    item_name = story["item"]
+    item_icon = story["item_icon"]
 
     if player_turn not in {"search_book", "seal_book", "steal_book"}:
         return ""
@@ -254,45 +428,45 @@ def handle_story_action(player_turn):
 
     if player_turn == "search_book":
         if st.session_state.magic_book_found:
-            return "📜 你已經找到封印魔法書。"
+            return f"{item_icon} 你已經找到{item_name}。"
         if st.session_state.affinity < 20:
             st.session_state.emotion = "警戒 😠"
-            st.session_state.action = "拒絕交出圖書館線索"
+            st.session_state.action = f"拒絕交出{item_name}的線索"
             st.session_state.affinity = max(-100, st.session_state.affinity - 5)
             update_quest()
-            return f"📜 {npc_name}尚未信任你，不會帶你進入封存書庫。"
+            return f"{item_icon} {npc_name}{story['search_denied']}"
 
         st.session_state.magic_book_found = True
-        st.session_state.story_stage = "第二章：封印的抉擇"
+        st.session_state.story_stage = story["found_stage"]
         st.session_state.emotion = "好奇 🤔"
-        st.session_state.action = "與玩家研究封印魔法書"
+        st.session_state.action = f"與玩家研究{item_name}"
         update_quest()
-        return f"📜 你與{npc_name}在封存書庫找到了一本散發微光的魔法書。"
+        return f"{item_icon} 你與{npc_name}{story['found_message']}"
 
     if player_turn == "seal_book":
         if not st.session_state.magic_book_found:
-            return "✨ 你還沒有找到魔法書，無法進行封印。"
+            return f"{item_icon} 你還沒有找到{item_name}，無法繼續任務。"
         if st.session_state.affinity < 60:
-            return f"✨ {npc_name}仍不願把封印儀式交給你，需要更高的信任。"
+            return f"{item_icon} {npc_name}{story['cooperate_denied']}"
 
-        st.session_state.story_stage = "結局：守護者盟約"
-        st.session_state.ending = "守護者盟約（合作結局）"
+        st.session_state.story_stage = story["cooperate_stage"]
+        st.session_state.ending = story["cooperate_ending"]
         st.session_state.emotion = "開心 😊"
-        st.session_state.action = "與玩家共同完成封印儀式"
+        st.session_state.action = f"與玩家共同完成{story['cooperate_label']}"
         st.session_state.affinity = min(100, st.session_state.affinity + 10)
         update_quest()
-        return f"✨ 封印儀式完成。{npc_name}邀請你成為圖書館的新任盟友。"
+        return f"{item_icon} {story['cooperate_result']}"
 
     if not st.session_state.magic_book_found:
-        return "📕 你還沒有找到魔法書，無法奪取它。"
+        return f"{item_icon} 你還沒有找到{item_name}，無法採取敵對行動。"
 
-    st.session_state.story_stage = "結局：圖書館的叛徒"
-    st.session_state.ending = "圖書館的叛徒（敵對結局）"
+    st.session_state.story_stage = story["hostile_stage"]
+    st.session_state.ending = story["hostile_ending"]
     st.session_state.emotion = "生氣 😡"
-    st.session_state.action = "啟動守衛追捕玩家"
+    st.session_state.action = "啟動防衛機制追捕玩家"
     st.session_state.affinity = -100
     update_quest()
-    return f"📕 你奪走魔法書。{npc_name}啟動圖書館的守衛封鎖出口。"
+    return f"{item_icon} {story['hostile_result']}"
 
 
 def create_save_data():
@@ -372,7 +546,7 @@ def load_save_data(data):
         min(2, int(data.get("skill_cooldown", 0))),
     )
     st.session_state.story_stage = str(
-        data.get("story_stage", "序章：圖書館的異常")
+        data.get("story_stage", NPC_PROFILES[saved_npc]["story"]["intro"])
     )
     st.session_state.magic_book_found = bool(data.get("magic_book_found", False))
     st.session_state.ending = str(data.get("ending", ""))
@@ -385,23 +559,10 @@ def load_save_data(data):
     save_active_npc_state()
 
 
-def update_affinity_by_rules(player_text):
-    """規則模式：根據玩家言行更新 -100～100 的關係值。"""
+def update_affinity_by_rules(relationship_intent):
+    """規則模式：只用明確針對 NPC 的行為更新關係值。"""
 
-    text = player_text.lower()
-
-    if any(word in text for word in ["攻擊", "殺", "偷", "威脅", "摧毀"]):
-        change = -20
-    elif any(word in text for word in ["討厭", "騙子", "笨蛋", "滾開"]):
-        change = -10
-    elif any(word in text for word in ["道歉", "對不起", "原諒"]):
-        change = 5
-    elif any(word in text for word in ["謝謝", "感謝", "相信", "幫助"]):
-        change = 10
-    elif any(word in text for word in ["魔法書", "秘密", "線索"]):
-        change = 3
-    else:
-        change = 1
+    change = relationship_change_from_intent(relationship_intent)
 
     st.session_state.affinity = max(
         -100,
@@ -410,47 +571,40 @@ def update_affinity_by_rules(player_text):
     update_quest()
 
 
-def create_rule_reply(player_text):
+def create_rule_reply(player_text, relationship_intent):
     """本機 AI 未啟用或無法連線時的備援回覆。"""
 
+    profile = get_active_profile()
+    story = profile["story"]
+
+    if relationship_intent == "external_event":
+        return "我會先留意周遭動靜。那不是你的過錯，我們應先確認外部威脅。"
+
+    if relationship_intent == "personal_need":
+        return "我明白你的需求。先照顧好自己，再告訴我你需要什麼協助。"
+
     if st.session_state.emotion.startswith("開心"):
-        return "你的善意讓我很高興。告訴我吧，你需要什麼協助？"
+        return (
+            f"你的善意讓我很高興。若你願意協助，"
+            f"我們可以一起處理{story['item']}的事。"
+        )
 
     if st.session_state.emotion.startswith("好奇"):
-        return "這件事引起了我的興趣。我會替你搜尋圖書館的古老紀錄。"
+        return f"這件事引起了我的興趣。我會尋找關於{story['item']}的線索。"
 
     if st.session_state.emotion.startswith(("警戒", "生氣")):
-        return "請立刻停止。身為守護者，我不會允許你危害這座圖書館。"
+        return (
+            f"請立刻停止。身為{profile['identity']}，"
+            f"我不會允許你危害{story['item']}。"
+        )
 
-    return f"我聽見你說「{player_text}」。請繼續說下去。"
+    return f"我聽見你說「{player_text}」。請說明你對{story['item']}的意圖。"
 
 
-def detect_threat_by_rules(player_text):
-    """規則模式：判斷玩家文字是否包含挑釁、威脅或實際攻擊。"""
+def detect_threat_by_rules(relationship_intent):
+    """規則模式：只有玩家直接針對 NPC 的行為才算威脅。"""
 
-    text = player_text.lower()
-
-    attack_words = [
-        "攻擊",
-        "擊中",
-        "施放",
-        "砍",
-        "刺",
-        "射擊",
-        "火球",
-        "殺了",
-        "打倒",
-    ]
-    threat_words = ["威脅", "否則", "我要摧毀", "我要殺", "準備攻擊"]
-    insult_words = ["討厭", "騙子", "笨蛋", "沒用", "滾開"]
-
-    if any(word in text for word in attack_words):
-        return "攻擊"
-    if any(word in text for word in threat_words):
-        return "威脅"
-    if any(word in text for word in insult_words):
-        return "挑釁"
-    return "無"
+    return threat_level_from_intent(relationship_intent)
 
 
 def prepare_player_action(player_turn):
@@ -625,20 +779,21 @@ def resolve_combat(threat_level, player_turn="talk", action_result=""):
     return result
 
 
-def apply_rule_decision(player_text):
+def apply_rule_decision(player_text, relationship_intent):
     """執行規則式情緒、行為、關係與回覆判斷。"""
 
-    emotion, action = decide_state(player_text)
+    emotion, action = decide_state(player_text, relationship_intent)
     st.session_state.emotion = emotion
     st.session_state.action = action
-    update_affinity_by_rules(player_text)
-    return create_rule_reply(player_text)
+    update_affinity_by_rules(relationship_intent)
+    return create_rule_reply(player_text, relationship_intent)
 
 
-def create_ai_decision(player_message):
+def create_ai_decision(player_message, relationship_intent):
     """要求 Qwen3 同時產生台詞、情緒、行為與關係變化。"""
 
     profile = get_active_profile()
+    story = profile["story"]
     system_prompt = f"""
 你是奇幻王城中的 NPC「{profile["name"]}」。
 
@@ -651,7 +806,7 @@ def create_ai_decision(player_message):
 - 與玩家的關係值：{st.session_state.affinity}，範圍是 -100 到 100
 - 目前事件：{st.session_state.quest}
 - 劇情章節：{st.session_state.story_stage}
-- 是否已找到封印魔法書：{st.session_state.magic_book_found}
+- 是否已找到{story['item']}：{st.session_state.magic_book_found}
 - 目前結局：{st.session_state.ending or "尚未決定"}
 - {profile["name"]}生命值：{st.session_state.npc_hp} / 100
 - 玩家生命值：{st.session_state.player_hp} / 100
@@ -665,6 +820,8 @@ def create_ai_decision(player_message):
 {player_message}
 </latest_player_message>
 
+遊戲系統判定的玩家意圖：{relationship_intent}
+
 決策規則：
 - 必須主要判斷 latest_player_message 的完整語意
 - 舊對話只能作為背景，不可取代最新訊息
@@ -674,6 +831,9 @@ def create_ai_decision(player_message):
 - 偷竊、攻擊、殺害或威脅，應降低 15 到 20
 - 玩家宣稱已攻擊、傷害或殺死{profile["name"]}，也必須判定為「攻擊」
 - 玩家用括號描述的動作仍然算是實際行動，不能當成無關文字
+- 玩家描述黑衣人、怪物、盜賊、其他第三者、環境事件，或自己的飢餓與受傷時，這不是對你的挑釁；不得因此降低關係值
+- 當玩家意圖是 external_event 或 personal_need 時，threat_level 必須是「無」，relationship_change 必須是 0
+- 只有玩家明確把辱罵、威脅、偷竊、破壞或攻擊指向你、你的使命或你的任務物品時，才能給負的 relationship_change
 - 挑釁的 threat_level 是「挑釁」
 - 威脅尚未實際動手時，threat_level 是「威脅」
 - 已經動手、施放攻擊或宣稱造成傷害時，threat_level 是「攻擊」
@@ -831,8 +991,12 @@ with st.sidebar:
     st.subheader("劇情進度")
     st.write(f"目前章節：{st.session_state.story_stage}")
     st.write(
-        "封印魔法書："
-        + ("已找到 📜" if st.session_state.magic_book_found else "尚未找到")
+        f"{profile['story']['item']}："
+        + (
+            f"已找到 {profile['story']['item_icon']}"
+            if st.session_state.magic_book_found
+            else "尚未找到"
+        )
     )
     if st.session_state.ending:
         st.success(f"已達成結局：{st.session_state.ending}")
@@ -854,7 +1018,7 @@ with st.sidebar:
         st.session_state.armor = "旅人斗篷"
         st.session_state.battle_turn = 0
         st.session_state.skill_cooldown = 0
-        st.session_state.story_stage = "序章：圖書館的異常"
+        st.session_state.story_stage = profile["story"]["intro"]
         st.session_state.magic_book_found = False
         st.session_state.ending = ""
         st.session_state.combat_message = "尚未進入戰鬥"
@@ -909,37 +1073,38 @@ for message in st.session_state.messages:
 st.caption("劇情行動：關係值會決定你能走向合作或敵對結局。")
 story_col1, story_col2, story_col3 = st.columns(3)
 story_finished = bool(st.session_state.ending)
+story = get_active_profile()["story"]
 
 if story_col1.button(
-    "📜 搜尋魔法書",
+    f"{story['item_icon']} {story['search_label']}",
     disabled=st.session_state.magic_book_found or story_finished,
     use_container_width=True,
 ):
     st.session_state.pending_action = {
         "type": "search_book",
-        "message": "我希望與你一起搜尋封印魔法書。",
+        "message": story["search_message"],
     }
     st.rerun()
 
 if story_col2.button(
-    "✨ 封印魔法書",
+    f"✨ {story['cooperate_label']}",
     disabled=not st.session_state.magic_book_found or story_finished,
     use_container_width=True,
 ):
     st.session_state.pending_action = {
         "type": "seal_book",
-        "message": "我願意與你完成封印魔法書的儀式。",
+        "message": story["cooperate_message"],
     }
     st.rerun()
 
 if story_col3.button(
-    "📕 奪取魔法書",
+    f"💥 {story['hostile_label']}",
     disabled=not st.session_state.magic_book_found or story_finished,
     use_container_width=True,
 ):
     st.session_state.pending_action = {
         "type": "steal_book",
-        "message": "我奪取封印魔法書並拒絕交還。",
+        "message": story["hostile_message"],
     }
     st.rerun()
 
@@ -991,6 +1156,13 @@ if st.session_state.pending_action:
 
 if player_message:
     action_result, action_is_available = prepare_player_action(player_turn)
+    relationship_intent = classify_relationship_intent(
+        player_message,
+        player_turn,
+    )
+    if not action_is_available:
+        relationship_intent = "neutral"
+
     story_result = handle_story_action(player_turn)
     if story_result:
         action_result = "\n\n".join(filter(None, [action_result, story_result]))
@@ -1006,29 +1178,35 @@ if player_message:
     if use_local_ai:
         try:
             with st.spinner(f"{npc_name}正在判斷你的意圖……"):
-                decision = create_ai_decision(player_message)
+                decision = create_ai_decision(
+                    player_message,
+                    relationship_intent,
+                )
 
             npc_reply = decision.reply
-            threat_level = decision.threat_level
             final_emotion = decision.emotion
             final_action = decision.action
-            relationship_change = decision.relationship_change
+            threat_level = threat_level_from_intent(relationship_intent)
+            relationship_change = relationship_change_from_intent(
+                relationship_intent
+            )
 
-            # 戰鬥屬於遊戲硬規則，避免模型把真正攻擊輕描淡寫。
-            if decision.threat_level == "攻擊" or (
-                player_turn in {"attack", "heavy_attack"}
-                and action_is_available
-            ):
-                threat_level = "攻擊"
+            # 關係與戰鬥屬於遊戲硬規則，避免模型誤把外部事件算在玩家頭上。
+            if relationship_intent == "direct_attack":
                 final_emotion = "生氣"
                 final_action = "進入戰鬥並反擊玩家"
-                relationship_change = -20
-            elif decision.threat_level == "威脅":
+            elif relationship_intent == "direct_hostile":
                 final_emotion = "警戒"
                 final_action = "準備防衛並警告玩家"
-                relationship_change = min(relationship_change, -15)
-            elif decision.threat_level == "挑釁":
-                relationship_change = min(relationship_change, -5)
+            elif relationship_intent == "direct_insult":
+                final_emotion = "生氣"
+                final_action = "拒絕與玩家合作"
+            elif relationship_intent == "external_event":
+                final_emotion = "警戒"
+                final_action = "留意外部威脅"
+            elif relationship_intent == "personal_need":
+                final_emotion = "平靜"
+                final_action = "評估玩家的需求"
 
             st.session_state.emotion = (
                 f"{final_emotion} {EMOTION_ICONS[final_emotion]}"
@@ -1045,17 +1223,19 @@ if player_message:
             st.session_state.ai_status = "Qwen3 8B（AI 決策）"
             st.session_state.connection_warning = False
         except Exception:
-            npc_reply = apply_rule_decision(player_message)
-            threat_level = detect_threat_by_rules(player_message)
-            if player_turn in {"attack", "heavy_attack"} and action_is_available:
-                threat_level = "攻擊"
+            npc_reply = apply_rule_decision(
+                player_message,
+                relationship_intent,
+            )
+            threat_level = detect_threat_by_rules(relationship_intent)
             st.session_state.ai_status = "規則模式（自動備援）"
             st.session_state.connection_warning = True
     else:
-        npc_reply = apply_rule_decision(player_message)
-        threat_level = detect_threat_by_rules(player_message)
-        if player_turn in {"attack", "heavy_attack"} and action_is_available:
-            threat_level = "攻擊"
+        npc_reply = apply_rule_decision(
+            player_message,
+            relationship_intent,
+        )
+        threat_level = detect_threat_by_rules(relationship_intent)
         st.session_state.ai_status = "規則模式"
         st.session_state.connection_warning = False
 
