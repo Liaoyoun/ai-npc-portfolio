@@ -1,3 +1,4 @@
+import random
 from typing import Literal
 
 import streamlit as st
@@ -17,6 +18,7 @@ class NPCDecision(BaseModel):
     reply: str
     emotion: Literal["平靜", "開心", "好奇", "警戒", "生氣", "悲傷"]
     action: str
+    threat_level: Literal["無", "挑釁", "威脅", "攻擊"]
     relationship_change: int = Field(ge=-20, le=10)
 
 
@@ -41,6 +43,9 @@ def initialize_state():
         "connection_warning": False,
         "affinity": 0,
         "quest": "尚未解鎖",
+        "npc_hp": 100,
+        "player_hp": 100,
+        "combat_message": "尚未進入戰鬥",
     }
 
     for key, value in defaults.items():
@@ -123,6 +128,87 @@ def create_rule_reply(player_text):
     return f"我聽見你說「{player_text}」。請繼續說下去。"
 
 
+def detect_threat_by_rules(player_text):
+    """規則模式：判斷玩家文字是否包含挑釁、威脅或實際攻擊。"""
+
+    text = player_text.lower()
+
+    attack_words = [
+        "攻擊",
+        "擊中",
+        "施放",
+        "砍",
+        "刺",
+        "射擊",
+        "火球",
+        "殺了",
+        "打倒",
+    ]
+    threat_words = ["威脅", "否則", "我要摧毀", "我要殺", "準備攻擊"]
+    insult_words = ["討厭", "騙子", "笨蛋", "沒用", "滾開"]
+
+    if any(word in text for word in attack_words):
+        return "攻擊"
+    if any(word in text for word in threat_words):
+        return "威脅"
+    if any(word in text for word in insult_words):
+        return "挑釁"
+    return "無"
+
+
+def resolve_combat(threat_level):
+    """由遊戲規則處理命中、傷害與反擊，不讓玩家自行宣告結果。"""
+
+    if threat_level != "攻擊":
+        return ""
+
+    if st.session_state.npc_hp <= 0:
+        return "⚔️ 艾琳已經倒下，無法繼續戰鬥。請重置遊戲。"
+
+    if st.session_state.player_hp <= 0:
+        return "⚔️ 玩家已失去戰鬥能力。請重置遊戲。"
+
+    combat_lines = []
+
+    # 玩家有 70% 機率命中；命中後造成 8～18 點傷害。
+    if random.randint(1, 100) <= 70:
+        player_damage = random.randint(8, 18)
+        st.session_state.npc_hp = max(
+            0,
+            st.session_state.npc_hp - player_damage,
+        )
+        combat_lines.append(f"⚔️ 玩家命中艾琳，造成 {player_damage} 點傷害。")
+    else:
+        combat_lines.append("⚔️ 艾琳避開了玩家的攻擊。")
+
+    if st.session_state.npc_hp <= 0:
+        st.session_state.emotion = "悲傷 😢"
+        st.session_state.action = "失去戰鬥能力"
+        combat_lines.append("💀 艾琳的生命值歸零，戰鬥結束。")
+        result = "\n\n".join(combat_lines)
+        st.session_state.combat_message = result
+        return result
+
+    # 艾琳有 75% 機率反擊；命中後造成 6～15 點傷害。
+    if random.randint(1, 100) <= 75:
+        npc_damage = random.randint(6, 15)
+        st.session_state.player_hp = max(
+            0,
+            st.session_state.player_hp - npc_damage,
+        )
+        combat_lines.append(f"🛡️ 艾琳反擊成功，玩家受到 {npc_damage} 點傷害。")
+    else:
+        combat_lines.append("🛡️ 玩家躲過了艾琳的反擊。")
+
+    if st.session_state.player_hp <= 0:
+        st.session_state.action = "制服玩家"
+        combat_lines.append("☠️ 玩家失去戰鬥能力，戰鬥結束。")
+
+    result = "\n\n".join(combat_lines)
+    st.session_state.combat_message = result
+    return result
+
+
 def apply_rule_decision(player_text):
     """執行規則式情緒、行為、關係與回覆判斷。"""
 
@@ -146,6 +232,8 @@ def create_ai_decision(player_message):
 - 目前行為：{st.session_state.action}
 - 與玩家的關係值：{st.session_state.affinity}，範圍是 -100 到 100
 - 目前事件：{st.session_state.quest}
+- 艾琳生命值：{st.session_state.npc_hp} / 100
+- 玩家生命值：{st.session_state.player_hp} / 100
 
 本輪玩家的最新訊息：
 <latest_player_message>
@@ -159,6 +247,13 @@ def create_ai_decision(player_message):
 - 普通中立對話可以改變 0 到 2
 - 嘲諷、辱罵、欺騙或無禮，應降低 5 到 15
 - 偷竊、攻擊、殺害或威脅，應降低 15 到 20
+- 玩家宣稱已攻擊、傷害或殺死艾琳，也必須判定為「攻擊」
+- 玩家用括號描述的動作仍然算是實際行動，不能當成無關文字
+- 挑釁的 threat_level 是「挑釁」
+- 威脅尚未實際動手時，threat_level 是「威脅」
+- 已經動手、施放攻擊或宣稱造成傷害時，threat_level 是「攻擊」
+- 不可自行決定攻擊是否命中、造成多少傷害或誰死亡
+- 戰鬥結果會由遊戲系統在你回覆後另外計算
 - 帶有禮貌詞的諷刺或辱罵仍是負面行為
 - 真誠道歉可以小幅修復關係，但不會立刻消除全部仇恨
 - 玩家態度改變時，情緒與行為也必須合理改變
@@ -228,6 +323,14 @@ with st.sidebar:
     st.write(f"回覆來源：{st.session_state.ai_status}")
 
     st.divider()
+    st.subheader("生命與戰鬥")
+    st.write(f"艾琳生命值：{st.session_state.npc_hp} / 100")
+    st.progress(st.session_state.npc_hp)
+    st.write(f"玩家生命值：{st.session_state.player_hp} / 100")
+    st.progress(st.session_state.player_hp)
+    st.caption(st.session_state.combat_message)
+
+    st.divider()
     st.subheader("關係與任務")
 
     if st.session_state.affinity >= 60:
@@ -256,6 +359,9 @@ with st.sidebar:
         st.session_state.connection_warning = False
         st.session_state.affinity = 0
         st.session_state.quest = "尚未解鎖"
+        st.session_state.npc_hp = 100
+        st.session_state.player_hp = 100
+        st.session_state.combat_message = "尚未進入戰鬥"
         st.rerun()
 
 st.subheader("與艾琳交談")
@@ -274,21 +380,40 @@ if player_message:
         }
     )
 
+    threat_level = "無"
+
     if use_local_ai:
         try:
             with st.spinner("艾琳正在判斷你的意圖……"):
                 decision = create_ai_decision(player_message)
 
             npc_reply = decision.reply
+            threat_level = decision.threat_level
+            final_emotion = decision.emotion
+            final_action = decision.action
+            relationship_change = decision.relationship_change
+
+            # 戰鬥屬於遊戲硬規則，避免模型把真正攻擊輕描淡寫。
+            if decision.threat_level == "攻擊":
+                final_emotion = "生氣"
+                final_action = "進入戰鬥並反擊玩家"
+                relationship_change = -20
+            elif decision.threat_level == "威脅":
+                final_emotion = "警戒"
+                final_action = "準備防衛並警告玩家"
+                relationship_change = min(relationship_change, -15)
+            elif decision.threat_level == "挑釁":
+                relationship_change = min(relationship_change, -5)
+
             st.session_state.emotion = (
-                f"{decision.emotion} {EMOTION_ICONS[decision.emotion]}"
+                f"{final_emotion} {EMOTION_ICONS[final_emotion]}"
             )
-            st.session_state.action = decision.action
+            st.session_state.action = final_action
             st.session_state.affinity = max(
                 -100,
                 min(
                     100,
-                    st.session_state.affinity + decision.relationship_change,
+                    st.session_state.affinity + relationship_change,
                 ),
             )
             update_quest()
@@ -296,12 +421,18 @@ if player_message:
             st.session_state.connection_warning = False
         except Exception:
             npc_reply = apply_rule_decision(player_message)
+            threat_level = detect_threat_by_rules(player_message)
             st.session_state.ai_status = "規則模式（自動備援）"
             st.session_state.connection_warning = True
     else:
         npc_reply = apply_rule_decision(player_message)
+        threat_level = detect_threat_by_rules(player_message)
         st.session_state.ai_status = "規則模式"
         st.session_state.connection_warning = False
+
+    combat_result = resolve_combat(threat_level)
+    if combat_result:
+        npc_reply = f"{npc_reply}\n\n---\n\n{combat_result}"
 
     st.session_state.messages.append(
         {
