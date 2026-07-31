@@ -1,3 +1,4 @@
+import copy
 import json
 import random
 from typing import Literal
@@ -62,23 +63,59 @@ ARMORS = {
     },
 }
 
+NPC_PROFILES = {
+    "艾琳": {
+        "name": "艾琳",
+        "icon": "🧙",
+        "identity": "王城圖書館守護者",
+        "personality": "冷靜、謹慎、富有好奇心",
+        "mission": "保護圖書館並協助可信任的訪客",
+        "initial_emotion": "平靜 😐",
+        "initial_action": "觀察玩家",
+    },
+    "洛恩": {
+        "name": "洛恩",
+        "icon": "🔮",
+        "identity": "古代封印術士",
+        "personality": "理性、寡言、對失落魔法十分執著",
+        "mission": "阻止封印魔法書落入危險之人手中",
+        "initial_emotion": "警戒 😠",
+        "initial_action": "檢查封印結界",
+    },
+}
 
-def initialize_state():
-    """只在第一次開啟頁面時建立遊戲狀態。"""
+NPC_STATE_KEYS = (
+    "messages",
+    "emotion",
+    "action",
+    "ai_status",
+    "connection_warning",
+    "affinity",
+    "quest",
+    "npc_hp",
+    "battle_turn",
+    "skill_cooldown",
+    "story_stage",
+    "magic_book_found",
+    "ending",
+    "combat_message",
+    "pending_action",
+)
 
-    defaults = {
+
+def create_default_npc_state(npc_key):
+    """建立單一 NPC 的獨立對話、關係、戰鬥與劇情狀態。"""
+
+    profile = NPC_PROFILES[npc_key]
+    return {
         "messages": [],
-        "emotion": "平靜 😐",
-        "action": "觀察玩家",
+        "emotion": profile["initial_emotion"],
+        "action": profile["initial_action"],
         "ai_status": "規則模式",
         "connection_warning": False,
         "affinity": 0,
         "quest": "尚未解鎖",
         "npc_hp": 100,
-        "player_hp": 100,
-        "potions": 3,
-        "weapon": "練習長劍",
-        "armor": "旅人斗篷",
         "battle_turn": 0,
         "skill_cooldown": 0,
         "story_stage": "序章：圖書館的異常",
@@ -86,12 +123,72 @@ def initialize_state():
         "ending": "",
         "combat_message": "尚未進入戰鬥",
         "pending_action": None,
-        "load_notice": "",
     }
 
-    for key, value in defaults.items():
+
+def get_active_profile():
+    return NPC_PROFILES[st.session_state.active_npc]
+
+
+def save_active_npc_state():
+    """將目前畫面的 NPC 狀態存回瀏覽器工作階段。"""
+
+    active_npc = st.session_state.active_npc
+    st.session_state.npc_states[active_npc] = {
+        key: copy.deepcopy(st.session_state[key]) for key in NPC_STATE_KEYS
+    }
+
+
+def switch_active_npc(next_npc):
+    """切換 NPC 時保存舊角色，再載入新角色的獨立狀態。"""
+
+    if next_npc == st.session_state.active_npc:
+        return
+
+    save_active_npc_state()
+    if next_npc not in st.session_state.npc_states:
+        st.session_state.npc_states[next_npc] = create_default_npc_state(next_npc)
+
+    for key, value in st.session_state.npc_states[next_npc].items():
+        st.session_state[key] = copy.deepcopy(value)
+    st.session_state.active_npc = next_npc
+    st.session_state.load_notice = ""
+
+
+def initialize_state():
+    """初始化玩家共用狀態，並將舊版艾琳資料遷移為可切換的 NPC 狀態。"""
+
+    player_defaults = {
+        "player_hp": 100,
+        "potions": 3,
+        "weapon": "練習長劍",
+        "armor": "旅人斗篷",
+        "load_notice": "",
+    }
+    for key, value in player_defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
+    active_npc = st.session_state.get("active_npc", "艾琳")
+    if active_npc not in NPC_PROFILES:
+        active_npc = "艾琳"
+    st.session_state.active_npc = active_npc
+
+    if "npc_states" not in st.session_state:
+        default_state = create_default_npc_state(active_npc)
+        st.session_state.npc_states = {
+            active_npc: {
+                key: copy.deepcopy(st.session_state.get(key, default_state[key]))
+                for key in NPC_STATE_KEYS
+            }
+        }
+
+    if active_npc not in st.session_state.npc_states:
+        st.session_state.npc_states[active_npc] = create_default_npc_state(active_npc)
+
+    for key, value in st.session_state.npc_states[active_npc].items():
+        if key not in st.session_state:
+            st.session_state[key] = copy.deepcopy(value)
 
 
 def decide_state(player_text):
@@ -117,13 +214,15 @@ def decide_state(player_text):
 def update_quest():
     """依關係、劇情物品與結局更新目前任務。"""
 
+    npc_name = get_active_profile()["name"]
+
     if st.session_state.ending:
         st.session_state.quest = f"結局完成：{st.session_state.ending}"
         return
 
     if st.session_state.magic_book_found:
         if st.session_state.affinity >= 60:
-            st.session_state.quest = "終章任務：與艾琳封印魔法書"
+            st.session_state.quest = f"終章任務：與{npc_name}封印魔法書"
         elif st.session_state.affinity <= -20:
             st.session_state.quest = "敵對事件：爭奪封印魔法書"
         else:
@@ -133,17 +232,19 @@ def update_quest():
     if st.session_state.affinity >= 60:
         st.session_state.quest = "盟友任務：尋找封印魔法書"
     elif st.session_state.affinity >= 20:
-        st.session_state.quest = "任務解鎖：請與艾琳一起搜尋魔法書"
+        st.session_state.quest = f"任務解鎖：請與{npc_name}一起搜尋魔法書"
     elif st.session_state.affinity <= -60:
         st.session_state.quest = "敵對事件：守護者追捕令"
     elif st.session_state.affinity <= -20:
-        st.session_state.quest = "艾琳拒絕與玩家合作"
+        st.session_state.quest = f"{npc_name}拒絕與玩家合作"
     else:
         st.session_state.quest = "尚未解鎖"
 
 
 def handle_story_action(player_turn):
     """處理任務按鈕，讓關係值決定合作或敵對的劇情分支。"""
+
+    npc_name = get_active_profile()["name"]
 
     if player_turn not in {"search_book", "seal_book", "steal_book"}:
         return ""
@@ -159,20 +260,20 @@ def handle_story_action(player_turn):
             st.session_state.action = "拒絕交出圖書館線索"
             st.session_state.affinity = max(-100, st.session_state.affinity - 5)
             update_quest()
-            return "📜 艾琳尚未信任你，不會帶你進入封存書庫。"
+            return f"📜 {npc_name}尚未信任你，不會帶你進入封存書庫。"
 
         st.session_state.magic_book_found = True
         st.session_state.story_stage = "第二章：封印的抉擇"
         st.session_state.emotion = "好奇 🤔"
         st.session_state.action = "與玩家研究封印魔法書"
         update_quest()
-        return "📜 你與艾琳在封存書庫找到了一本散發微光的魔法書。"
+        return f"📜 你與{npc_name}在封存書庫找到了一本散發微光的魔法書。"
 
     if player_turn == "seal_book":
         if not st.session_state.magic_book_found:
             return "✨ 你還沒有找到魔法書，無法進行封印。"
         if st.session_state.affinity < 60:
-            return "✨ 艾琳仍不願把封印儀式交給你，需要更高的信任。"
+            return f"✨ {npc_name}仍不願把封印儀式交給你，需要更高的信任。"
 
         st.session_state.story_stage = "結局：守護者盟約"
         st.session_state.ending = "守護者盟約（合作結局）"
@@ -180,7 +281,7 @@ def handle_story_action(player_turn):
         st.session_state.action = "與玩家共同完成封印儀式"
         st.session_state.affinity = min(100, st.session_state.affinity + 10)
         update_quest()
-        return "✨ 封印儀式完成。艾琳邀請你成為圖書館的新任盟友。"
+        return f"✨ 封印儀式完成。{npc_name}邀請你成為圖書館的新任盟友。"
 
     if not st.session_state.magic_book_found:
         return "📕 你還沒有找到魔法書，無法奪取它。"
@@ -191,14 +292,17 @@ def handle_story_action(player_turn):
     st.session_state.action = "啟動守衛追捕玩家"
     st.session_state.affinity = -100
     update_quest()
-    return "📕 你奪走魔法書。艾琳啟動圖書館的守衛封鎖出口。"
+    return f"📕 你奪走魔法書。{npc_name}啟動圖書館的守衛封鎖出口。"
 
 
 def create_save_data():
     """整理可攜式 JSON 存檔需要保存的遊戲狀態。"""
 
+    save_active_npc_state()
+
     return {
-        "save_version": 5,
+        "save_version": 6,
+        "active_npc": st.session_state.active_npc,
         "messages": st.session_state.messages,
         "emotion": st.session_state.emotion,
         "action": st.session_state.action,
@@ -227,6 +331,12 @@ def load_save_data(data):
     messages = data.get("messages", [])
     if not isinstance(messages, list):
         raise ValueError("對話記憶格式不正確")
+
+    save_active_npc_state()
+    saved_npc = str(data.get("active_npc", "艾琳"))
+    if saved_npc not in NPC_PROFILES:
+        saved_npc = "艾琳"
+    st.session_state.active_npc = saved_npc
 
     valid_messages = []
     for message in messages[-30:]:
@@ -272,6 +382,7 @@ def load_save_data(data):
     st.session_state.ai_status = "規則模式"
     st.session_state.connection_warning = False
     update_quest()
+    save_active_npc_state()
 
 
 def update_affinity_by_rules(player_text):
@@ -420,6 +531,7 @@ def resolve_combat(threat_level, player_turn="talk", action_result=""):
     """由遊戲規則處理命中、傷害與反擊，不讓玩家自行宣告結果。"""
 
     combat_lines = [action_result] if action_result else []
+    npc_name = get_active_profile()["name"]
     weapon = WEAPONS.get(st.session_state.weapon, WEAPONS["練習長劍"])
     armor = ARMORS.get(st.session_state.armor, ARMORS["旅人斗篷"])
     combat_active = (
@@ -437,7 +549,7 @@ def resolve_combat(threat_level, player_turn="talk", action_result=""):
         return result
 
     if st.session_state.npc_hp <= 0:
-        return "⚔️ 艾琳已經倒下，無法繼續戰鬥。請重置遊戲。"
+        return f"⚔️ {npc_name}已經倒下，無法繼續戰鬥。請重置遊戲。"
 
     if st.session_state.player_hp <= 0:
         return "⚔️ 玩家已失去戰鬥能力。請重置遊戲。"
@@ -463,23 +575,23 @@ def resolve_combat(threat_level, player_turn="talk", action_result=""):
                 st.session_state.npc_hp - player_damage,
             )
             combat_lines.append(
-                f"{attack_name}命中！玩家使用{st.session_state.weapon}對艾琳造成 "
+                f"{attack_name}命中！玩家使用{st.session_state.weapon}對{npc_name}造成 "
                 f"{player_damage} 點傷害。"
             )
         else:
-            combat_lines.append(f"{attack_name}落空，艾琳避開了攻擊。")
+            combat_lines.append(f"{attack_name}落空，{npc_name}避開了攻擊。")
     else:
         combat_lines.append("🛡️ 玩家本回合沒有發動攻擊。")
 
     if st.session_state.npc_hp <= 0:
         st.session_state.emotion = "悲傷 😢"
         st.session_state.action = "失去戰鬥能力"
-        combat_lines.append("💀 艾琳的生命值歸零，戰鬥結束。")
+        combat_lines.append(f"💀 {npc_name}的生命值歸零，戰鬥結束。")
         result = "\n\n".join(combat_lines)
         st.session_state.combat_message = result
         return result
 
-    # 艾琳有 75% 機率反擊；防禦姿態與防具都會降低傷害。
+    # NPC 有 75% 機率反擊；防禦姿態與防具都會降低傷害。
     if random.randint(1, 100) <= 75:
         npc_damage = random.randint(6, 15)
         damage_notes = []
@@ -500,9 +612,9 @@ def resolve_combat(threat_level, player_turn="talk", action_result=""):
             0,
             st.session_state.player_hp - npc_damage,
         )
-        combat_lines.append(f"🛡️ 艾琳反擊成功，玩家受到 {npc_damage} 點傷害。")
+        combat_lines.append(f"🛡️ {npc_name}反擊成功，玩家受到 {npc_damage} 點傷害。")
     else:
-        combat_lines.append("🛡️ 玩家躲過了艾琳的反擊。")
+        combat_lines.append(f"🛡️ 玩家躲過了{npc_name}的反擊。")
 
     if st.session_state.player_hp <= 0:
         st.session_state.action = "制服玩家"
@@ -526,12 +638,14 @@ def apply_rule_decision(player_text):
 def create_ai_decision(player_message):
     """要求 Qwen3 同時產生台詞、情緒、行為與關係變化。"""
 
+    profile = get_active_profile()
     system_prompt = f"""
-你是奇幻王城圖書館的守護者艾琳。
+你是奇幻王城中的 NPC「{profile["name"]}」。
 
 角色設定：
-- 個性冷靜、謹慎、富有好奇心
-- 使命是保護圖書館，並協助可信任的訪客
+- 身分：{profile["identity"]}
+- 個性：{profile["personality"]}
+- 使命：{profile["mission"]}
 - 目前情緒：{st.session_state.emotion}
 - 目前行為：{st.session_state.action}
 - 與玩家的關係值：{st.session_state.affinity}，範圍是 -100 到 100
@@ -539,7 +653,7 @@ def create_ai_decision(player_message):
 - 劇情章節：{st.session_state.story_stage}
 - 是否已找到封印魔法書：{st.session_state.magic_book_found}
 - 目前結局：{st.session_state.ending or "尚未決定"}
-- 艾琳生命值：{st.session_state.npc_hp} / 100
+- {profile["name"]}生命值：{st.session_state.npc_hp} / 100
 - 玩家生命值：{st.session_state.player_hp} / 100
 - 玩家武器：{st.session_state.weapon}，額外攻擊傷害 +{WEAPONS[st.session_state.weapon]["attack_bonus"]}
 - 玩家防具：{st.session_state.armor}，每次受到傷害 -{ARMORS[st.session_state.armor]["damage_reduction"]}
@@ -558,7 +672,7 @@ def create_ai_decision(player_message):
 - 普通中立對話可以改變 0 到 2
 - 嘲諷、辱罵、欺騙或無禮，應降低 5 到 15
 - 偷竊、攻擊、殺害或威脅，應降低 15 到 20
-- 玩家宣稱已攻擊、傷害或殺死艾琳，也必須判定為「攻擊」
+- 玩家宣稱已攻擊、傷害或殺死{profile["name"]}，也必須判定為「攻擊」
 - 玩家用括號描述的動作仍然算是實際行動，不能當成無關文字
 - 挑釁的 threat_level 是「挑釁」
 - 威脅尚未實際動手時，threat_level 是「威脅」
@@ -572,7 +686,7 @@ def create_ai_decision(player_message):
 
 回覆規則：
 - 永遠使用繁體中文
-- 保持艾琳的角色身分，不要說自己是 AI
+- 保持{profile["name"]}的角色身分，不要說自己是 AI
 - 根據目前關係、情緒與行為回覆
 - 每次回答二到四句
 - 不要顯示思考過程
@@ -605,10 +719,26 @@ st.title("🧙 AI NPC 對話系統")
 st.caption("具備角色設定、短期記憶、情緒、關係與行為決策的 MVP")
 
 with st.sidebar:
-    st.header("角色設定")
-    st.write("名字：艾琳")
-    st.write("身分：王城圖書館守護者")
-    st.write("個性：冷靜、謹慎、富有好奇心")
+    st.header("NPC 選擇")
+    npc_options = list(NPC_PROFILES)
+    selected_npc = st.selectbox(
+        "目前交談的 NPC",
+        npc_options,
+        index=npc_options.index(st.session_state.active_npc),
+        format_func=lambda npc_key: (
+            f"{NPC_PROFILES[npc_key]['icon']} {NPC_PROFILES[npc_key]['name']}"
+        ),
+    )
+    if selected_npc != st.session_state.active_npc:
+        switch_active_npc(selected_npc)
+        st.rerun()
+
+    profile = get_active_profile()
+    st.header(f"{profile['icon']} 角色設定")
+    st.write(f"名字：{profile['name']}")
+    st.write(f"身分：{profile['identity']}")
+    st.write(f"個性：{profile['personality']}")
+    st.caption(f"使命：{profile['mission']}")
 
     st.divider()
 
@@ -635,7 +765,7 @@ with st.sidebar:
 
     st.divider()
     st.subheader("生命與戰鬥")
-    st.write(f"艾琳生命值：{st.session_state.npc_hp} / 100")
+    st.write(f"{profile['name']}生命值：{st.session_state.npc_hp} / 100")
     st.progress(st.session_state.npc_hp)
     st.write(f"玩家生命值：{st.session_state.player_hp} / 100")
     st.progress(st.session_state.player_hp)
@@ -707,12 +837,12 @@ with st.sidebar:
     if st.session_state.ending:
         st.success(f"已達成結局：{st.session_state.ending}")
     else:
-        st.caption("先取得艾琳的信任，再從對話框上方選擇劇情行動。")
+        st.caption(f"先取得{profile['name']}的信任，再從對話框上方選擇劇情行動。")
 
-    if st.button("清除對話並重置"):
+    if st.button(f"清除{profile['name']}的對話並重置"):
         st.session_state.messages = []
-        st.session_state.emotion = "平靜 😐"
-        st.session_state.action = "觀察玩家"
+        st.session_state.emotion = profile["initial_emotion"]
+        st.session_state.action = profile["initial_action"]
         st.session_state.ai_status = "規則模式"
         st.session_state.connection_warning = False
         st.session_state.affinity = 0
@@ -769,7 +899,8 @@ with st.sidebar:
     if st.session_state.load_notice:
         st.info(st.session_state.load_notice)
 
-st.subheader("與艾琳交談")
+npc_name = get_active_profile()["name"]
+st.subheader(f"與{npc_name}交談")
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
@@ -818,7 +949,7 @@ action_col1, action_col2, action_col3, action_col4 = st.columns(4)
 if action_col1.button("⚔️ 攻擊", use_container_width=True):
     st.session_state.pending_action = {
         "type": "attack",
-        "message": "我拔出長劍，朝艾琳發動攻擊。",
+        "message": f"我拔出長劍，朝{npc_name}發動攻擊。",
     }
     st.rerun()
 
@@ -846,11 +977,11 @@ if action_col4.button(
 ):
     st.session_state.pending_action = {
         "type": "heavy_attack",
-        "message": "我集中力量，朝艾琳施展重擊。",
+        "message": f"我集中力量，朝{npc_name}施展重擊。",
     }
     st.rerun()
 
-player_message = st.chat_input("輸入你想對艾琳說的話")
+player_message = st.chat_input(f"輸入你想對{npc_name}說的話")
 player_turn = "talk"
 
 if st.session_state.pending_action:
@@ -874,7 +1005,7 @@ if player_message:
 
     if use_local_ai:
         try:
-            with st.spinner("艾琳正在判斷你的意圖……"):
+            with st.spinner(f"{npc_name}正在判斷你的意圖……"):
                 decision = create_ai_decision(player_message)
 
             npc_reply = decision.reply
