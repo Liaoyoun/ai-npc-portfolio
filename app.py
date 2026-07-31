@@ -32,6 +32,36 @@ EMOTION_ICONS = {
     "悲傷": "😢",
 }
 
+WEAPONS = {
+    "練習長劍": {
+        "attack_bonus": 0,
+        "description": "平衡、可靠，沒有額外傷害加成。",
+    },
+    "守衛長劍": {
+        "attack_bonus": 4,
+        "description": "王城守衛使用的長劍，攻擊傷害 +4。",
+    },
+    "秘法短杖": {
+        "attack_bonus": 2,
+        "description": "刻有符文的短杖，攻擊傷害 +2。",
+    },
+}
+
+ARMORS = {
+    "旅人斗篷": {
+        "damage_reduction": 0,
+        "description": "輕便的斗篷，沒有額外減傷。",
+    },
+    "獵人皮甲": {
+        "damage_reduction": 3,
+        "description": "結實的皮甲，每次受到傷害 -3。",
+    },
+    "守衛盾牌": {
+        "damage_reduction": 5,
+        "description": "厚實盾牌，每次受到傷害 -5。",
+    },
+}
+
 
 def initialize_state():
     """只在第一次開啟頁面時建立遊戲狀態。"""
@@ -47,6 +77,8 @@ def initialize_state():
         "npc_hp": 100,
         "player_hp": 100,
         "potions": 3,
+        "weapon": "練習長劍",
+        "armor": "旅人斗篷",
         "combat_message": "尚未進入戰鬥",
         "pending_action": None,
         "load_notice": "",
@@ -96,7 +128,7 @@ def create_save_data():
     """整理可攜式 JSON 存檔需要保存的遊戲狀態。"""
 
     return {
-        "save_version": 2,
+        "save_version": 3,
         "messages": st.session_state.messages,
         "emotion": st.session_state.emotion,
         "action": st.session_state.action,
@@ -105,6 +137,8 @@ def create_save_data():
         "npc_hp": st.session_state.npc_hp,
         "player_hp": st.session_state.player_hp,
         "potions": st.session_state.potions,
+        "weapon": st.session_state.weapon,
+        "armor": st.session_state.armor,
         "combat_message": st.session_state.combat_message,
     }
 
@@ -138,6 +172,12 @@ def load_save_data(data):
         min(100, int(data.get("player_hp", 100))),
     )
     st.session_state.potions = max(0, min(9, int(data.get("potions", 3))))
+    saved_weapon = str(data.get("weapon", "練習長劍"))
+    saved_armor = str(data.get("armor", "旅人斗篷"))
+    st.session_state.weapon = (
+        saved_weapon if saved_weapon in WEAPONS else "練習長劍"
+    )
+    st.session_state.armor = saved_armor if saved_armor in ARMORS else "旅人斗篷"
     st.session_state.combat_message = str(
         data.get("combat_message", "尚未進入戰鬥")
     )
@@ -239,6 +279,8 @@ def resolve_combat(threat_level, player_turn="talk", action_result=""):
     """由遊戲規則處理命中、傷害與反擊，不讓玩家自行宣告結果。"""
 
     combat_lines = [action_result] if action_result else []
+    weapon = WEAPONS.get(st.session_state.weapon, WEAPONS["練習長劍"])
+    armor = ARMORS.get(st.session_state.armor, ARMORS["旅人斗篷"])
     combat_active = (
         st.session_state.npc_hp < 100 or st.session_state.player_hp < 100
     )
@@ -259,14 +301,17 @@ def resolve_combat(threat_level, player_turn="talk", action_result=""):
     if st.session_state.player_hp <= 0:
         return "⚔️ 玩家已失去戰鬥能力。請重置遊戲。"
 
-    # 玩家有 70% 機率命中；命中後造成 8～18 點傷害。
+    # 玩家有 70% 機率命中；武器會提高 8～18 點的基礎傷害。
     if random.randint(1, 100) <= 70:
-        player_damage = random.randint(8, 18)
+        player_damage = random.randint(8, 18) + weapon["attack_bonus"]
         st.session_state.npc_hp = max(
             0,
             st.session_state.npc_hp - player_damage,
         )
-        combat_lines.append(f"⚔️ 玩家命中艾琳，造成 {player_damage} 點傷害。")
+        combat_lines.append(
+            f"⚔️ 玩家使用{st.session_state.weapon}命中艾琳，造成 "
+            f"{player_damage} 點傷害。"
+        )
     else:
         combat_lines.append("⚔️ 艾琳避開了玩家的攻擊。")
 
@@ -278,15 +323,23 @@ def resolve_combat(threat_level, player_turn="talk", action_result=""):
         st.session_state.combat_message = result
         return result
 
-    # 艾琳有 75% 機率反擊；防禦姿態可將傷害減半。
+    # 艾琳有 75% 機率反擊；防禦姿態與防具都會降低傷害。
     if random.randint(1, 100) <= 75:
         npc_damage = random.randint(6, 15)
+        damage_notes = []
         if player_turn == "defend":
             reduced_damage = max(1, npc_damage // 2)
-            combat_lines.append(
-                f"🛡️ 防禦姿態生效，傷害由 {npc_damage} 降為 {reduced_damage}。"
+            damage_notes.append(f"防禦姿態：{npc_damage}→{reduced_damage}")
+            npc_damage = reduced_damage
+        armor_reduction = armor["damage_reduction"]
+        if armor_reduction:
+            reduced_damage = max(1, npc_damage - armor_reduction)
+            damage_notes.append(
+                f"{st.session_state.armor}：{npc_damage}→{reduced_damage}"
             )
             npc_damage = reduced_damage
+        if damage_notes:
+            combat_lines.append("🛡️ " + "；".join(damage_notes) + "。")
         st.session_state.player_hp = max(
             0,
             st.session_state.player_hp - npc_damage,
@@ -329,6 +382,8 @@ def create_ai_decision(player_message):
 - 目前事件：{st.session_state.quest}
 - 艾琳生命值：{st.session_state.npc_hp} / 100
 - 玩家生命值：{st.session_state.player_hp} / 100
+- 玩家武器：{st.session_state.weapon}，額外攻擊傷害 +{WEAPONS[st.session_state.weapon]["attack_bonus"]}
+- 玩家防具：{st.session_state.armor}，每次受到傷害 -{ARMORS[st.session_state.armor]["damage_reduction"]}
 
 本輪玩家的最新訊息：
 <latest_player_message>
@@ -427,6 +482,35 @@ with st.sidebar:
     st.caption(st.session_state.combat_message)
 
     st.divider()
+    st.subheader("玩家裝備")
+
+    weapon_options = list(WEAPONS)
+    selected_weapon = st.selectbox(
+        "選擇武器",
+        weapon_options,
+        index=weapon_options.index(st.session_state.weapon),
+    )
+    st.session_state.weapon = selected_weapon
+    weapon_stats = WEAPONS[selected_weapon]
+    st.caption(
+        f"⚔️ 攻擊傷害 +{weapon_stats['attack_bonus']}｜"
+        f"{weapon_stats['description']}"
+    )
+
+    armor_options = list(ARMORS)
+    selected_armor = st.selectbox(
+        "選擇防具",
+        armor_options,
+        index=armor_options.index(st.session_state.armor),
+    )
+    st.session_state.armor = selected_armor
+    armor_stats = ARMORS[selected_armor]
+    st.caption(
+        f"🛡️ 受到傷害 -{armor_stats['damage_reduction']}｜"
+        f"{armor_stats['description']}"
+    )
+
+    st.divider()
     st.subheader("關係與任務")
 
     if st.session_state.affinity >= 60:
@@ -458,6 +542,8 @@ with st.sidebar:
         st.session_state.npc_hp = 100
         st.session_state.player_hp = 100
         st.session_state.potions = 3
+        st.session_state.weapon = "練習長劍"
+        st.session_state.armor = "旅人斗篷"
         st.session_state.combat_message = "尚未進入戰鬥"
         st.session_state.pending_action = None
         st.session_state.load_notice = ""
