@@ -80,6 +80,42 @@ QUEST_REWARDS = {
     },
 }
 
+PLAYER_BUILDS = {
+    "平衡冒險者": {
+        "description": "三項能力平均，適合第一次探索王城。",
+        "stats": {"符文學識": 3, "勇氣": 3, "洞察": 3},
+    },
+    "符文學徒": {
+        "description": "擅長古代文字與魔法結構，結界類試煉更有優勢。",
+        "stats": {"符文學識": 5, "勇氣": 2, "洞察": 2},
+    },
+    "城衛見習": {
+        "description": "面對危險時更沉著，適合需要勇氣的試煉。",
+        "stats": {"符文學識": 2, "勇氣": 5, "洞察": 2},
+    },
+    "遺跡斥候": {
+        "description": "善於發現細節與危險徵兆，適合觀察型試煉。",
+        "stats": {"符文學識": 2, "勇氣": 2, "洞察": 5},
+    },
+}
+
+ABILITY_TRIALS = {
+    "barrier_trial": {
+        "npc": "洛恩",
+        "title": "結界穩定試煉",
+        "stat": "符文學識",
+        "difficulty": 8,
+        "message": "我依照洛恩的指示，嘗試以符文穩定結界裂縫。",
+        "success_affinity": 5,
+        "success_action": "與玩家成功穩定結界",
+        "failure_action": "重新校正失衡的結界符文",
+        "success_result": "結界回應了正確的符文排列，裂縫暫時平穩下來。",
+        "failure_result": "符文的節奏失衡，結界湧出一陣反噬。",
+        "success_reply": "你抓住了結界的節奏。這不是單靠運氣；你的判斷值得信任。",
+        "failure_reply": "先別急著責怪自己。結界會反噬不代表你在與我為敵，調整符文後還能再試。",
+    },
+}
+
 NPC_PROFILES = {
     "艾琳": {
         "name": "艾琳",
@@ -152,10 +188,12 @@ NPC_EVENTS = {
             "help_label": "協助疏散訪客",
             "help_message": "我協助艾琳疏散訪客，並守住封存書庫的入口。",
             "help_result": "訪客安全離開，艾琳對你的行動表示信任。",
+            "help_reply": "你在混亂中仍先顧及訪客，這正是我希望看到的。圖書館欠你一份人情。",
             "help_affinity": 10,
             "observe_label": "保持距離觀察",
             "observe_message": "我先保持距離，觀察黑衣人的行動。",
             "observe_result": "你記下了黑衣人的特徵，但沒有直接介入。",
+            "observe_reply": "你的觀察或許能留下線索。我會繼續守住書庫，別讓他們接近封印。",
         },
         {
             "id": "lost_archive",
@@ -164,10 +202,12 @@ NPC_EVENTS = {
             "help_label": "協助尋找檔案",
             "help_message": "我協助艾琳安撫學者，並一起尋找遺失的研究檔案。",
             "help_result": "檔案在錯置書架後被找到，艾琳看見你的耐心。",
+            "help_reply": "謝謝你願意停下來幫忙。知識不該因一次疏忽就被遺忘。",
             "help_affinity": 8,
             "observe_label": "靜靜等待結果",
             "observe_message": "我暫時不介入，等待艾琳處理學者的求助。",
             "observe_result": "艾琳獨自處理了求助，事件平靜落幕。",
+            "observe_reply": "求助者已安頓好。下次若你願意伸手，或許能讓事情更快結束。",
         },
     ],
     "洛恩": [
@@ -178,10 +218,12 @@ NPC_EVENTS = {
             "help_label": "協助穩定結界",
             "help_message": "我協助洛恩布置符文，暫時穩定擴張的結界裂縫。",
             "help_result": "裂縫逐漸收束，洛恩承認你在壓力下仍值得信賴。",
+            "help_reply": "符文沒有失控，做得不錯。你在壓力下仍能保持專注，這很難得。",
             "help_affinity": 10,
             "observe_label": "保持安全距離",
             "observe_message": "我先保持安全距離，觀察結界裂縫的變化。",
             "observe_result": "洛恩獨自穩住裂縫，你則記下了魔力波動。",
+            "observe_reply": "你留下的觀測資料有用。下次裂縫再度擴張，我們能更快找出源頭。",
         },
         {
             "id": "missing_scout",
@@ -190,10 +232,12 @@ NPC_EVENTS = {
             "help_label": "協助追蹤斥候",
             "help_message": "我和洛恩依照通訊水晶的殘留魔力追蹤失聯斥候。",
             "help_result": "你們在側廊找到受傷的斥候，並帶他安全離開遺跡。",
+            "help_reply": "斥候能活著回來，多虧你沒有放棄追蹤。這份判斷值得記下。",
             "help_affinity": 8,
             "observe_label": "留在入口戒備",
             "observe_message": "我選擇留在遺跡入口戒備，等待洛恩的消息。",
             "observe_result": "洛恩獨自帶回斥候，而入口也沒有出現新的危險。",
+            "observe_reply": "入口沒有失守，你的選擇並非毫無價值。遺跡裡的每個位置都需要有人守住。",
         },
     ],
 }
@@ -215,6 +259,8 @@ NPC_STATE_KEYS = (
     "combat_message",
     "active_event",
     "completed_events",
+    "ability_check_log",
+    "passed_trials",
     "pending_action",
 )
 
@@ -240,6 +286,8 @@ def create_default_npc_state(npc_key):
         "combat_message": "尚未進入戰鬥",
         "active_event": None,
         "completed_events": [],
+        "ability_check_log": [],
+        "passed_trials": [],
         "pending_action": None,
     }
 
@@ -315,6 +363,8 @@ def initialize_state():
         "weapon": "練習長劍",
         "armor": "旅人斗篷",
         "inventory": [],
+        "ability_build": "平衡冒險者",
+        "ability_build_locked": False,
         "load_notice": "",
     }
     for key, value in player_defaults.items():
@@ -540,6 +590,95 @@ def get_event_by_id(npc_key, event_id):
     return None
 
 
+def get_player_stats():
+    """回傳目前玩家背景所提供的能力值。"""
+
+    build_name = st.session_state.get("ability_build", "平衡冒險者")
+    build = PLAYER_BUILDS.get(build_name, PLAYER_BUILDS["平衡冒險者"])
+    return build["stats"]
+
+
+def is_ability_trial_unlocked(trial):
+    """能力試煉必須在對應 NPC 的隨機事件完成後才可嘗試。"""
+
+    if st.session_state.active_npc != trial["npc"]:
+        return False
+
+    return len(st.session_state.completed_events) >= len(
+        NPC_EVENTS[trial["npc"]]
+    )
+
+
+def handle_ability_check(player_turn):
+    """以能力值加上 1d6 骰子處理可重試的 RPG 試煉。"""
+
+    trial = ABILITY_TRIALS.get(player_turn)
+    if trial is None:
+        return "", ""
+
+    if not is_ability_trial_unlocked(trial):
+        return "⚠️ 先完成洛恩的已知事件，才能理解結界的運作方式。", ""
+
+    if player_turn in st.session_state.passed_trials:
+        return "✨ 這項結界試煉已經通過，裂縫目前保持穩定。", ""
+
+    stats = get_player_stats()
+    stat_name = trial["stat"]
+    stat_value = stats.get(stat_name, 0)
+    roll = random.randint(1, 6)
+    total = roll + stat_value
+    difficulty = trial["difficulty"]
+    success = total >= difficulty
+
+    st.session_state.ability_build_locked = True
+    log_entry = {
+        "trial_id": player_turn,
+        "stat": stat_name,
+        "roll": roll,
+        "stat_value": stat_value,
+        "total": total,
+        "difficulty": difficulty,
+        "success": success,
+    }
+    st.session_state.ability_check_log = (
+        st.session_state.ability_check_log + [log_entry]
+    )[-5:]
+
+    check_summary = (
+        f"🎲 {trial['title']}：1d6（{roll}）+ {stat_name}（{stat_value}）"
+        f" = {total}，難度 {difficulty}。"
+    )
+    if success:
+        affinity_change = trial["success_affinity"]
+        st.session_state.affinity = max(
+            -100,
+            min(100, st.session_state.affinity + affinity_change),
+        )
+        st.session_state.emotion = "開心 😊"
+        st.session_state.action = trial["success_action"]
+        st.session_state.passed_trials.append(player_turn)
+        update_quest()
+        return (
+            f"{check_summary}\n\n✅ 檢定成功！{trial['success_result']}"
+            f"（關係值 +{affinity_change}）",
+            trial["success_reply"],
+        )
+
+    backlash_damage = min(12, max(3, difficulty - total + 3))
+    st.session_state.player_hp = max(
+        0,
+        st.session_state.player_hp - backlash_damage,
+    )
+    st.session_state.emotion = "警戒 😠"
+    st.session_state.action = trial["failure_action"]
+    update_quest()
+    return (
+        f"{check_summary}\n\n❌ 檢定失敗。{trial['failure_result']}"
+        f" 玩家受到 {backlash_damage} 點結界反噬；關係值不變，可以再試一次。",
+        trial["failure_reply"],
+    )
+
+
 def trigger_random_event():
     """為目前 NPC 觸發一個尚未解決的隨機事件。"""
 
@@ -565,11 +704,11 @@ def handle_event_action(player_turn):
     """處理玩家對目前隨機事件的協助或觀察選擇。"""
 
     if player_turn not in {"event_help", "event_observe"}:
-        return ""
+        return "", ""
 
     event = st.session_state.active_event
     if not isinstance(event, dict):
-        return "⚠️ 事件已結束，請觸發新的事件。"
+        return "⚠️ 事件已結束，請觸發新的事件。", ""
 
     event_id = event.get("id")
     configured_event = get_event_by_id(
@@ -578,19 +717,21 @@ def handle_event_action(player_turn):
     )
     if configured_event is None:
         st.session_state.active_event = None
-        return "⚠️ 這個事件資料無法辨識，已自動結束。"
+        return "⚠️ 這個事件資料無法辨識，已自動結束。", ""
 
     if player_turn == "event_help":
         relationship_change = configured_event["help_affinity"]
         st.session_state.emotion = "開心 😊"
         st.session_state.action = "與玩家共同處理突發事件"
         result = configured_event["help_result"]
+        npc_reply = configured_event["help_reply"]
         effect = f"關係值 +{relationship_change}"
     else:
         relationship_change = 0
         st.session_state.emotion = "警戒 😠"
         st.session_state.action = "持續監控突發事件"
         result = configured_event["observe_result"]
+        npc_reply = configured_event["observe_reply"]
         effect = "關係值不變"
 
     st.session_state.affinity = max(
@@ -601,7 +742,7 @@ def handle_event_action(player_turn):
         st.session_state.completed_events.append(event_id)
     st.session_state.active_event = None
     update_quest()
-    return f"🧭 {result}（{effect}）"
+    return f"🧭 {result}（{effect}）", npc_reply
 
 
 def handle_story_action(player_turn):
@@ -762,6 +903,49 @@ def normalise_npc_state(raw_state, npc_key):
     state["active_event"] = (
         copy.deepcopy(active_event) if active_event is not None else None
     )
+
+    valid_trial_ids = {
+        trial_id
+        for trial_id, trial in ABILITY_TRIALS.items()
+        if trial["npc"] == npc_key
+    }
+    raw_passed_trials = raw_state.get("passed_trials", [])
+    if not isinstance(raw_passed_trials, list):
+        raw_passed_trials = []
+    state["passed_trials"] = []
+    for trial_id in raw_passed_trials:
+        if (
+            isinstance(trial_id, str)
+            and trial_id in valid_trial_ids
+            and trial_id not in state["passed_trials"]
+        ):
+            state["passed_trials"].append(trial_id)
+
+    raw_ability_log = raw_state.get("ability_check_log", [])
+    if not isinstance(raw_ability_log, list):
+        raw_ability_log = []
+    state["ability_check_log"] = []
+    for entry in raw_ability_log[-5:]:
+        if not isinstance(entry, dict):
+            continue
+        trial_id = entry.get("trial_id")
+        trial = ABILITY_TRIALS.get(trial_id)
+        if trial is None or trial["npc"] != npc_key:
+            continue
+        state["ability_check_log"].append(
+            {
+                "trial_id": trial_id,
+                "stat": trial["stat"],
+                "roll": clamp_integer(entry.get("roll", 1), 1, 1, 6),
+                "stat_value": clamp_integer(
+                    entry.get("stat_value", 0), 0, 0, 5
+                ),
+                "total": clamp_integer(entry.get("total", 0), 0, 0, 11),
+                "difficulty": trial["difficulty"],
+                "success": entry.get("success") is True,
+            }
+        )
+
     state["pending_action"] = None
     return state
 
@@ -782,7 +966,7 @@ def create_save_data():
         npc_state["pending_action"] = None
 
     return {
-        "save_version": 8,
+        "save_version": 9,
         "active_npc": st.session_state.active_npc,
         "npc_states": npc_states,
         "player_state": {
@@ -791,6 +975,8 @@ def create_save_data():
             "weapon": st.session_state.weapon,
             "armor": st.session_state.armor,
             "inventory": st.session_state.inventory,
+            "ability_build": st.session_state.ability_build,
+            "ability_build_locked": st.session_state.ability_build_locked,
         },
     }
 
@@ -867,6 +1053,14 @@ def load_save_data(data):
             and reward_id not in st.session_state.inventory
         ):
             st.session_state.inventory.append(reward_id)
+
+    saved_build = str(player_state.get("ability_build", "平衡冒險者"))
+    st.session_state.ability_build = (
+        saved_build if saved_build in PLAYER_BUILDS else "平衡冒險者"
+    )
+    st.session_state.ability_build_locked = (
+        player_state.get("ability_build_locked") is True
+    )
 
     update_quest()
     save_active_npc_state()
@@ -1305,6 +1499,31 @@ with st.sidebar:
         st.caption("背包目前沒有任務獎勵。完成合作結局即可獲得專屬道具。")
 
     st.divider()
+    st.subheader("玩家能力")
+    ability_build_options = list(PLAYER_BUILDS)
+    if st.session_state.ability_build not in PLAYER_BUILDS:
+        st.session_state.ability_build = "平衡冒險者"
+    selected_build = st.selectbox(
+        "本次冒險的能力背景",
+        ability_build_options,
+        index=ability_build_options.index(st.session_state.ability_build),
+        disabled=st.session_state.ability_build_locked,
+    )
+    st.session_state.ability_build = selected_build
+    active_build = PLAYER_BUILDS[selected_build]
+    st.caption(active_build["description"])
+    st.write(
+        "｜".join(
+            f"{stat}：{value}"
+            for stat, value in active_build["stats"].items()
+        )
+    )
+    if st.session_state.ability_build_locked:
+        st.caption("🔒 已開始能力試煉，本輪冒險不能再更換能力背景。")
+    else:
+        st.caption("首次進行能力試煉後，能力背景會鎖定到重置遊戲為止。")
+
+    st.divider()
     st.subheader("關係與任務")
 
     if st.session_state.affinity >= 60:
@@ -1352,6 +1571,17 @@ with st.sidebar:
         total_events = len(NPC_EVENTS[st.session_state.active_npc])
         st.caption(f"已解決事件：{event_count} / {total_events}")
 
+    if st.session_state.ability_check_log:
+        latest_check = st.session_state.ability_check_log[-1]
+        check_icon = "✅" if latest_check["success"] else "❌"
+        trial = ABILITY_TRIALS[latest_check["trial_id"]]
+        st.caption(
+            f"最近檢定：{check_icon} {trial['title']}｜"
+            f"1d6 {latest_check['roll']} + {latest_check['stat']} "
+            f"{latest_check['stat_value']} = {latest_check['total']} / "
+            f"{latest_check['difficulty']}"
+        )
+
     if st.button("清除所有進度並重置遊戲"):
         st.session_state.npc_states = {
             npc_key: create_default_npc_state(npc_key)
@@ -1363,6 +1593,8 @@ with st.sidebar:
         st.session_state.weapon = "練習長劍"
         st.session_state.armor = "旅人斗篷"
         st.session_state.inventory = []
+        st.session_state.ability_build = "平衡冒險者"
+        st.session_state.ability_build_locked = False
         st.session_state.load_notice = ""
         st.rerun()
 
@@ -1442,6 +1674,35 @@ else:
             st.rerun()
     else:
         st.caption("🏁 這名 NPC 的已知事件都已解決。")
+
+barrier_trial = ABILITY_TRIALS["barrier_trial"]
+if st.session_state.active_npc == barrier_trial["npc"]:
+    st.divider()
+    st.subheader("🎲 結界能力試煉")
+    st.caption(
+        "同一個行動的結果會依能力值與骰子而不同；失敗是結界反噬，"
+        "不會視為挑釁或降低關係值。"
+    )
+    if "barrier_trial" in st.session_state.passed_trials:
+        st.success("✅ 你已通過結界穩定試煉，裂縫目前維持穩定。")
+    elif is_ability_trial_unlocked(barrier_trial):
+        stats = get_player_stats()
+        stat_name = barrier_trial["stat"]
+        st.write(
+            f"需求：{stat_name} + 1d6 ≥ {barrier_trial['difficulty']}｜"
+            f"目前 {stat_name}：{stats[stat_name]}"
+        )
+        if st.button(
+            f"🎲 嘗試穩定結界（{stat_name}）",
+            use_container_width=True,
+        ):
+            st.session_state.pending_action = {
+                "type": "barrier_trial",
+                "message": barrier_trial["message"],
+            }
+            st.rerun()
+    else:
+        st.caption("先完成洛恩的 2 個隨機事件，才能開始理解並穩定結界。")
 
 st.caption("劇情行動：關係值會決定你能走向合作或敵對結局。")
 story_col1, story_col2, story_col3 = st.columns(3)
@@ -1533,15 +1794,16 @@ if player_message:
         player_message,
         player_turn,
     )
-    if player_turn in {"event_help", "event_observe"}:
+    if player_turn in {"event_help", "event_observe", "barrier_trial"}:
         relationship_intent = "neutral"
     if not action_is_available:
         relationship_intent = "neutral"
 
-    event_result = handle_event_action(player_turn)
+    event_result, event_reply = handle_event_action(player_turn)
+    ability_result, ability_reply = handle_ability_check(player_turn)
     story_result = handle_story_action(player_turn)
     action_result = "\n\n".join(
-        filter(None, [action_result, event_result, story_result])
+        filter(None, [action_result, event_result, ability_result, story_result])
     )
     st.session_state.messages.append(
         {
@@ -1616,12 +1878,30 @@ if player_message:
         st.session_state.ai_status = "規則模式"
         st.session_state.connection_warning = False
 
-    if event_result and player_turn == "event_help":
+    if event_reply and player_turn == "event_help":
         st.session_state.emotion = "開心 😊"
         st.session_state.action = "與玩家共同處理突發事件"
-    elif event_result and player_turn == "event_observe":
+    elif event_reply and player_turn == "event_observe":
         st.session_state.emotion = "警戒 😠"
         st.session_state.action = "持續監控突發事件"
+
+    if event_reply:
+        npc_reply = event_reply
+        st.session_state.ai_status = "事件劇情"
+        st.session_state.connection_warning = False
+
+    if ability_reply:
+        latest_check = st.session_state.ability_check_log[-1]
+        active_trial = ABILITY_TRIALS[player_turn]
+        if latest_check["success"]:
+            st.session_state.emotion = "開心 😊"
+            st.session_state.action = active_trial["success_action"]
+        else:
+            st.session_state.emotion = "警戒 😠"
+            st.session_state.action = active_trial["failure_action"]
+        npc_reply = ability_reply
+        st.session_state.ai_status = "能力檢定"
+        st.session_state.connection_warning = False
 
     combat_result = resolve_combat(threat_level, player_turn, action_result)
     if combat_result:
