@@ -46,7 +46,9 @@ def initialize_state():
         "quest": "尚未解鎖",
         "npc_hp": 100,
         "player_hp": 100,
+        "potions": 3,
         "combat_message": "尚未進入戰鬥",
+        "pending_action": None,
         "load_notice": "",
     }
 
@@ -94,7 +96,7 @@ def create_save_data():
     """整理可攜式 JSON 存檔需要保存的遊戲狀態。"""
 
     return {
-        "save_version": 1,
+        "save_version": 2,
         "messages": st.session_state.messages,
         "emotion": st.session_state.emotion,
         "action": st.session_state.action,
@@ -102,6 +104,7 @@ def create_save_data():
         "quest": st.session_state.quest,
         "npc_hp": st.session_state.npc_hp,
         "player_hp": st.session_state.player_hp,
+        "potions": st.session_state.potions,
         "combat_message": st.session_state.combat_message,
     }
 
@@ -134,6 +137,7 @@ def load_save_data(data):
         0,
         min(100, int(data.get("player_hp", 100))),
     )
+    st.session_state.potions = max(0, min(9, int(data.get("potions", 3))))
     st.session_state.combat_message = str(
         data.get("combat_message", "尚未進入戰鬥")
     )
@@ -210,19 +214,50 @@ def detect_threat_by_rules(player_text):
     return "無"
 
 
-def resolve_combat(threat_level):
+def prepare_player_action(player_turn):
+    """先處理玩家按下的遊戲動作，讓 AI 能看見最新生命值。"""
+
+    if player_turn == "defend":
+        return "🛡️ 玩家採取防禦姿態，下一次反擊傷害會減半。"
+
+    if player_turn != "heal":
+        return ""
+
+    if st.session_state.potions <= 0:
+        return "🩹 治療藥水已用完。"
+
+    if st.session_state.player_hp >= 100:
+        return "🩹 玩家生命值已滿，不需要使用治療藥水。"
+
+    recovered_hp = min(25, 100 - st.session_state.player_hp)
+    st.session_state.player_hp += recovered_hp
+    st.session_state.potions -= 1
+    return f"🩹 玩家使用治療藥水，恢復 {recovered_hp} 點生命值。"
+
+
+def resolve_combat(threat_level, player_turn="talk", action_result=""):
     """由遊戲規則處理命中、傷害與反擊，不讓玩家自行宣告結果。"""
 
-    if threat_level != "攻擊":
-        return ""
+    combat_lines = [action_result] if action_result else []
+    combat_active = (
+        st.session_state.npc_hp < 100 or st.session_state.player_hp < 100
+    )
+    player_attacks = threat_level == "攻擊"
+    npc_can_counter = player_attacks or (
+        combat_active and player_turn in {"defend", "heal"}
+    )
+
+    if not player_attacks and not npc_can_counter:
+        result = "\n\n".join(combat_lines)
+        if result:
+            st.session_state.combat_message = result
+        return result
 
     if st.session_state.npc_hp <= 0:
         return "⚔️ 艾琳已經倒下，無法繼續戰鬥。請重置遊戲。"
 
     if st.session_state.player_hp <= 0:
         return "⚔️ 玩家已失去戰鬥能力。請重置遊戲。"
-
-    combat_lines = []
 
     # 玩家有 70% 機率命中；命中後造成 8～18 點傷害。
     if random.randint(1, 100) <= 70:
@@ -243,9 +278,15 @@ def resolve_combat(threat_level):
         st.session_state.combat_message = result
         return result
 
-    # 艾琳有 75% 機率反擊；命中後造成 6～15 點傷害。
+    # 艾琳有 75% 機率反擊；防禦姿態可將傷害減半。
     if random.randint(1, 100) <= 75:
         npc_damage = random.randint(6, 15)
+        if player_turn == "defend":
+            reduced_damage = max(1, npc_damage // 2)
+            combat_lines.append(
+                f"🛡️ 防禦姿態生效，傷害由 {npc_damage} 降為 {reduced_damage}。"
+            )
+            npc_damage = reduced_damage
         st.session_state.player_hp = max(
             0,
             st.session_state.player_hp - npc_damage,
@@ -382,6 +423,7 @@ with st.sidebar:
     st.progress(st.session_state.npc_hp)
     st.write(f"玩家生命值：{st.session_state.player_hp} / 100")
     st.progress(st.session_state.player_hp)
+    st.write(f"治療藥水：{st.session_state.potions} 瓶")
     st.caption(st.session_state.combat_message)
 
     st.divider()
@@ -415,7 +457,9 @@ with st.sidebar:
         st.session_state.quest = "尚未解鎖"
         st.session_state.npc_hp = 100
         st.session_state.player_hp = 100
+        st.session_state.potions = 3
         st.session_state.combat_message = "尚未進入戰鬥"
+        st.session_state.pending_action = None
         st.session_state.load_notice = ""
         st.rerun()
 
@@ -462,9 +506,40 @@ for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
 
+st.caption("遊戲動作：按鈕位於輸入框上方，按下後會自動送出指令。")
+action_col1, action_col2, action_col3 = st.columns(3)
+
+if action_col1.button("⚔️ 攻擊", use_container_width=True):
+    st.session_state.pending_action = {
+        "type": "attack",
+        "message": "我拔出長劍，朝艾琳發動攻擊。",
+    }
+    st.rerun()
+
+if action_col2.button("🛡️ 防禦", use_container_width=True):
+    st.session_state.pending_action = {
+        "type": "defend",
+        "message": "我舉起盾牌，採取防禦姿態。",
+    }
+    st.rerun()
+
+if action_col3.button("🩹 使用藥水", use_container_width=True):
+    st.session_state.pending_action = {
+        "type": "heal",
+        "message": "我使用一瓶治療藥水，先處理自己的傷勢。",
+    }
+    st.rerun()
+
 player_message = st.chat_input("輸入你想對艾琳說的話")
+player_turn = "talk"
+
+if st.session_state.pending_action:
+    player_turn = st.session_state.pending_action["type"]
+    player_message = st.session_state.pending_action["message"]
+    st.session_state.pending_action = None
 
 if player_message:
+    action_result = prepare_player_action(player_turn)
     st.session_state.messages.append(
         {
             "role": "user",
@@ -486,7 +561,8 @@ if player_message:
             relationship_change = decision.relationship_change
 
             # 戰鬥屬於遊戲硬規則，避免模型把真正攻擊輕描淡寫。
-            if decision.threat_level == "攻擊":
+            if decision.threat_level == "攻擊" or player_turn == "attack":
+                threat_level = "攻擊"
                 final_emotion = "生氣"
                 final_action = "進入戰鬥並反擊玩家"
                 relationship_change = -20
@@ -514,15 +590,19 @@ if player_message:
         except Exception:
             npc_reply = apply_rule_decision(player_message)
             threat_level = detect_threat_by_rules(player_message)
+            if player_turn == "attack":
+                threat_level = "攻擊"
             st.session_state.ai_status = "規則模式（自動備援）"
             st.session_state.connection_warning = True
     else:
         npc_reply = apply_rule_decision(player_message)
         threat_level = detect_threat_by_rules(player_message)
+        if player_turn == "attack":
+            threat_level = "攻擊"
         st.session_state.ai_status = "規則模式"
         st.session_state.connection_warning = False
 
-    combat_result = resolve_combat(threat_level)
+    combat_result = resolve_combat(threat_level, player_turn, action_result)
     if combat_result:
         npc_reply = f"{npc_reply}\n\n---\n\n{combat_result}"
 
