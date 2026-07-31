@@ -143,6 +143,61 @@ NPC_PROFILES = {
     },
 }
 
+NPC_EVENTS = {
+    "艾琳": [
+        {
+            "id": "masked_intruders",
+            "title": "黑衣人闖入圖書館",
+            "description": "一群黑衣人正試圖闖入封存書庫，訪客開始四處逃散。",
+            "help_label": "協助疏散訪客",
+            "help_message": "我協助艾琳疏散訪客，並守住封存書庫的入口。",
+            "help_result": "訪客安全離開，艾琳對你的行動表示信任。",
+            "help_affinity": 10,
+            "observe_label": "保持距離觀察",
+            "observe_message": "我先保持距離，觀察黑衣人的行動。",
+            "observe_result": "你記下了黑衣人的特徵，但沒有直接介入。",
+        },
+        {
+            "id": "lost_archive",
+            "title": "失落檔案的求助者",
+            "description": "一名年輕學者在圖書館哭泣，說他的研究檔案不見了。",
+            "help_label": "協助尋找檔案",
+            "help_message": "我協助艾琳安撫學者，並一起尋找遺失的研究檔案。",
+            "help_result": "檔案在錯置書架後被找到，艾琳看見你的耐心。",
+            "help_affinity": 8,
+            "observe_label": "靜靜等待結果",
+            "observe_message": "我暫時不介入，等待艾琳處理學者的求助。",
+            "observe_result": "艾琳獨自處理了求助，事件平靜落幕。",
+        },
+    ],
+    "洛恩": [
+        {
+            "id": "barrier_breach",
+            "title": "遺跡結界裂縫擴張",
+            "description": "結界發出刺耳聲響，裂縫中不斷滲出不穩定的魔力。",
+            "help_label": "協助穩定結界",
+            "help_message": "我協助洛恩布置符文，暫時穩定擴張的結界裂縫。",
+            "help_result": "裂縫逐漸收束，洛恩承認你在壓力下仍值得信賴。",
+            "help_affinity": 10,
+            "observe_label": "保持安全距離",
+            "observe_message": "我先保持安全距離，觀察結界裂縫的變化。",
+            "observe_result": "洛恩獨自穩住裂縫，你則記下了魔力波動。",
+        },
+        {
+            "id": "missing_scout",
+            "title": "失聯的遺跡斥候",
+            "description": "一名斥候進入遺跡後失去聯絡，只留下斷裂的通訊水晶。",
+            "help_label": "協助追蹤斥候",
+            "help_message": "我和洛恩依照通訊水晶的殘留魔力追蹤失聯斥候。",
+            "help_result": "你們在側廊找到受傷的斥候，並帶他安全離開遺跡。",
+            "help_affinity": 8,
+            "observe_label": "留在入口戒備",
+            "observe_message": "我選擇留在遺跡入口戒備，等待洛恩的消息。",
+            "observe_result": "洛恩獨自帶回斥候，而入口也沒有出現新的危險。",
+        },
+    ],
+}
+
 NPC_STATE_KEYS = (
     "messages",
     "emotion",
@@ -158,6 +213,8 @@ NPC_STATE_KEYS = (
     "magic_book_found",
     "ending",
     "combat_message",
+    "active_event",
+    "completed_events",
     "pending_action",
 )
 
@@ -181,6 +238,8 @@ def create_default_npc_state(npc_key):
         "magic_book_found": False,
         "ending": "",
         "combat_message": "尚未進入戰鬥",
+        "active_event": None,
+        "completed_events": [],
         "pending_action": None,
     }
 
@@ -276,8 +335,18 @@ def initialize_state():
             }
         }
 
-    if active_npc not in st.session_state.npc_states:
-        st.session_state.npc_states[active_npc] = create_default_npc_state(active_npc)
+    for npc_key in NPC_PROFILES:
+        saved_state = st.session_state.npc_states.get(npc_key)
+        if not isinstance(saved_state, dict):
+            st.session_state.npc_states[npc_key] = create_default_npc_state(
+                npc_key
+            )
+            continue
+
+        default_state = create_default_npc_state(npc_key)
+        for key, value in default_state.items():
+            if key not in saved_state:
+                saved_state[key] = copy.deepcopy(value)
 
     for key, value in st.session_state.npc_states[active_npc].items():
         if key not in st.session_state:
@@ -462,6 +531,79 @@ def update_quest():
         st.session_state.quest = "尚未解鎖"
 
 
+def get_event_by_id(npc_key, event_id):
+    """依事件識別碼找回指定 NPC 的事件設定。"""
+
+    for event in NPC_EVENTS[npc_key]:
+        if event["id"] == event_id:
+            return event
+    return None
+
+
+def trigger_random_event():
+    """為目前 NPC 觸發一個尚未解決的隨機事件。"""
+
+    if st.session_state.active_event:
+        return "⚠️ 目前已有進行中的事件，請先做出選擇。"
+
+    completed_events = set(st.session_state.completed_events)
+    available_events = [
+        event
+        for event in NPC_EVENTS[st.session_state.active_npc]
+        if event["id"] not in completed_events
+    ]
+    if not available_events:
+        return "🏁 這名 NPC 已沒有新的已知事件。"
+
+    st.session_state.active_event = copy.deepcopy(
+        random.choice(available_events)
+    )
+    return f"⚠️ 事件發生：{st.session_state.active_event['title']}"
+
+
+def handle_event_action(player_turn):
+    """處理玩家對目前隨機事件的協助或觀察選擇。"""
+
+    if player_turn not in {"event_help", "event_observe"}:
+        return ""
+
+    event = st.session_state.active_event
+    if not isinstance(event, dict):
+        return "⚠️ 事件已結束，請觸發新的事件。"
+
+    event_id = event.get("id")
+    configured_event = get_event_by_id(
+        st.session_state.active_npc,
+        event_id,
+    )
+    if configured_event is None:
+        st.session_state.active_event = None
+        return "⚠️ 這個事件資料無法辨識，已自動結束。"
+
+    if player_turn == "event_help":
+        relationship_change = configured_event["help_affinity"]
+        st.session_state.emotion = "開心 😊"
+        st.session_state.action = "與玩家共同處理突發事件"
+        result = configured_event["help_result"]
+        effect = f"關係值 +{relationship_change}"
+    else:
+        relationship_change = 0
+        st.session_state.emotion = "警戒 😠"
+        st.session_state.action = "持續監控突發事件"
+        result = configured_event["observe_result"]
+        effect = "關係值不變"
+
+    st.session_state.affinity = max(
+        -100,
+        min(100, st.session_state.affinity + relationship_change),
+    )
+    if event_id not in st.session_state.completed_events:
+        st.session_state.completed_events.append(event_id)
+    st.session_state.active_event = None
+    update_quest()
+    return f"🧭 {result}（{effect}）"
+
+
 def handle_story_action(player_turn):
     """處理任務按鈕，讓關係值決定合作或敵對的劇情分支。"""
 
@@ -594,6 +736,31 @@ def normalise_npc_state(raw_state, npc_key):
     state["ending"] = str(raw_state.get("ending", ""))
     state["combat_message"] = str(
         raw_state.get("combat_message", state["combat_message"])
+    )
+    valid_event_ids = {
+        event["id"] for event in NPC_EVENTS[npc_key]
+    }
+    raw_completed_events = raw_state.get("completed_events", [])
+    if not isinstance(raw_completed_events, list):
+        raw_completed_events = []
+    state["completed_events"] = []
+    for event_id in raw_completed_events:
+        if (
+            isinstance(event_id, str)
+            and event_id in valid_event_ids
+            and event_id not in state["completed_events"]
+        ):
+            state["completed_events"].append(event_id)
+
+    raw_active_event = raw_state.get("active_event")
+    active_event_id = (
+        raw_active_event.get("id")
+        if isinstance(raw_active_event, dict)
+        else None
+    )
+    active_event = get_event_by_id(npc_key, active_event_id)
+    state["active_event"] = (
+        copy.deepcopy(active_event) if active_event is not None else None
     )
     state["pending_action"] = None
     return state
@@ -964,6 +1131,7 @@ def create_ai_decision(player_message, relationship_intent):
 - 劇情章節：{st.session_state.story_stage}
 - 是否已找到{story['item']}：{st.session_state.magic_book_found}
 - 目前結局：{st.session_state.ending or "尚未決定"}
+- 目前隨機事件：{st.session_state.active_event['title'] if st.session_state.active_event else "無"}
 - {profile["name"]}生命值：{st.session_state.npc_hp} / 100
 - 玩家生命值：{st.session_state.player_hp} / 100
 - 玩家武器：{st.session_state.weapon}，額外攻擊傷害 +{WEAPONS[st.session_state.weapon]["attack_bonus"]}
@@ -1173,6 +1341,17 @@ with st.sidebar:
     else:
         st.caption(f"先取得{profile['name']}的信任，再從對話框上方選擇劇情行動。")
 
+    st.divider()
+    st.subheader("事件紀錄")
+    if st.session_state.active_event:
+        st.warning(
+            f"進行中：{st.session_state.active_event['title']}"
+        )
+    else:
+        event_count = len(st.session_state.completed_events)
+        total_events = len(NPC_EVENTS[st.session_state.active_npc])
+        st.caption(f"已解決事件：{event_count} / {total_events}")
+
     if st.button("清除所有進度並重置遊戲"):
         st.session_state.npc_states = {
             npc_key: create_default_npc_state(npc_key)
@@ -1230,6 +1409,39 @@ st.subheader(f"與{npc_name}交談")
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
+
+st.caption("隨機事件：外部事件有自己的選項與結果，不會被視為你在挑釁 NPC。")
+active_event = st.session_state.active_event
+if active_event:
+    st.warning(f"⚠️ {active_event['title']}\n\n{active_event['description']}")
+    event_col1, event_col2 = st.columns(2)
+    if event_col1.button(
+        f"🛟 {active_event['help_label']}",
+        use_container_width=True,
+    ):
+        st.session_state.pending_action = {
+            "type": "event_help",
+            "message": active_event["help_message"],
+        }
+        st.rerun()
+    if event_col2.button(
+        f"👁️ {active_event['observe_label']}",
+        use_container_width=True,
+    ):
+        st.session_state.pending_action = {
+            "type": "event_observe",
+            "message": active_event["observe_message"],
+        }
+        st.rerun()
+else:
+    resolved_event_count = len(st.session_state.completed_events)
+    total_event_count = len(NPC_EVENTS[st.session_state.active_npc])
+    if resolved_event_count < total_event_count:
+        if st.button("🎲 探索周遭並觸發事件", use_container_width=True):
+            st.session_state.combat_message = trigger_random_event()
+            st.rerun()
+    else:
+        st.caption("🏁 這名 NPC 的已知事件都已解決。")
 
 st.caption("劇情行動：關係值會決定你能走向合作或敵對結局。")
 story_col1, story_col2, story_col3 = st.columns(3)
@@ -1321,12 +1533,16 @@ if player_message:
         player_message,
         player_turn,
     )
+    if player_turn in {"event_help", "event_observe"}:
+        relationship_intent = "neutral"
     if not action_is_available:
         relationship_intent = "neutral"
 
+    event_result = handle_event_action(player_turn)
     story_result = handle_story_action(player_turn)
-    if story_result:
-        action_result = "\n\n".join(filter(None, [action_result, story_result]))
+    action_result = "\n\n".join(
+        filter(None, [action_result, event_result, story_result])
+    )
     st.session_state.messages.append(
         {
             "role": "user",
@@ -1399,6 +1615,13 @@ if player_message:
         threat_level = detect_threat_by_rules(relationship_intent)
         st.session_state.ai_status = "規則模式"
         st.session_state.connection_warning = False
+
+    if event_result and player_turn == "event_help":
+        st.session_state.emotion = "開心 😊"
+        st.session_state.action = "與玩家共同處理突發事件"
+    elif event_result and player_turn == "event_observe":
+        st.session_state.emotion = "警戒 😠"
+        st.session_state.action = "持續監控突發事件"
 
     combat_result = resolve_combat(threat_level, player_turn, action_result)
     if combat_result:
