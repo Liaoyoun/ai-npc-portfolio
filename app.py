@@ -63,6 +63,23 @@ ARMORS = {
     },
 }
 
+QUEST_REWARDS = {
+    "艾琳": {
+        "id": "guardian_badge",
+        "icon": "🏅",
+        "name": "守護者徽章",
+        "description": "艾琳交付的信任象徵，每次受到傷害額外 -1。",
+        "damage_reduction": 1,
+    },
+    "洛恩": {
+        "id": "barrier_amulet",
+        "icon": "🪬",
+        "name": "結界護符",
+        "description": "洛恩製作的結界護符，每次受到傷害額外 -2。",
+        "damage_reduction": 2,
+    },
+}
+
 NPC_PROFILES = {
     "艾琳": {
         "name": "艾琳",
@@ -172,6 +189,39 @@ def get_active_profile():
     return NPC_PROFILES[st.session_state.active_npc]
 
 
+def get_inventory_rewards():
+    """取得背包中有效的任務獎勵資料。"""
+
+    reward_by_id = {
+        reward["id"]: reward for reward in QUEST_REWARDS.values()
+    }
+    return [
+        reward_by_id[reward_id]
+        for reward_id in st.session_state.inventory
+        if reward_id in reward_by_id
+    ]
+
+
+def get_inventory_damage_reduction():
+    """計算任務獎勵提供的額外減傷。"""
+
+    return sum(reward["damage_reduction"] for reward in get_inventory_rewards())
+
+
+def grant_current_npc_reward():
+    """合作結局完成時發放目前 NPC 的專屬獎勵，並避免重複取得。"""
+
+    reward = QUEST_REWARDS[st.session_state.active_npc]
+    if reward["id"] in st.session_state.inventory:
+        return f"{reward['icon']} 你已持有「{reward['name']}」。"
+
+    st.session_state.inventory.append(reward["id"])
+    return (
+        f"{reward['icon']} 獲得任務獎勵「{reward['name']}」："
+        f"{reward['description']}"
+    )
+
+
 def save_active_npc_state():
     """將目前畫面的 NPC 狀態存回瀏覽器工作階段。"""
 
@@ -205,6 +255,7 @@ def initialize_state():
         "potions": 3,
         "weapon": "練習長劍",
         "armor": "旅人斗篷",
+        "inventory": [],
         "load_notice": "",
     }
     for key, value in player_defaults.items():
@@ -455,7 +506,8 @@ def handle_story_action(player_turn):
         st.session_state.action = f"與玩家共同完成{story['cooperate_label']}"
         st.session_state.affinity = min(100, st.session_state.affinity + 10)
         update_quest()
-        return f"{item_icon} {story['cooperate_result']}"
+        reward_message = grant_current_npc_reward()
+        return f"{item_icon} {story['cooperate_result']}\n\n{reward_message}"
 
     if not st.session_state.magic_book_found:
         return f"{item_icon} 你還沒有找到{item_name}，無法採取敵對行動。"
@@ -475,7 +527,7 @@ def create_save_data():
     save_active_npc_state()
 
     return {
-        "save_version": 6,
+        "save_version": 7,
         "active_npc": st.session_state.active_npc,
         "messages": st.session_state.messages,
         "emotion": st.session_state.emotion,
@@ -487,6 +539,7 @@ def create_save_data():
         "potions": st.session_state.potions,
         "weapon": st.session_state.weapon,
         "armor": st.session_state.armor,
+        "inventory": st.session_state.inventory,
         "battle_turn": st.session_state.battle_turn,
         "skill_cooldown": st.session_state.skill_cooldown,
         "story_stage": st.session_state.story_stage,
@@ -537,6 +590,20 @@ def load_save_data(data):
         saved_weapon if saved_weapon in WEAPONS else "練習長劍"
     )
     st.session_state.armor = saved_armor if saved_armor in ARMORS else "旅人斗篷"
+    valid_reward_ids = {
+        reward["id"] for reward in QUEST_REWARDS.values()
+    }
+    saved_inventory = data.get("inventory", [])
+    if not isinstance(saved_inventory, list):
+        saved_inventory = []
+    st.session_state.inventory = []
+    for reward_id in saved_inventory:
+        if (
+            isinstance(reward_id, str)
+            and reward_id in valid_reward_ids
+            and reward_id not in st.session_state.inventory
+        ):
+            st.session_state.inventory.append(reward_id)
     st.session_state.battle_turn = max(
         0,
         min(99, int(data.get("battle_turn", 0))),
@@ -688,6 +755,10 @@ def resolve_combat(threat_level, player_turn="talk", action_result=""):
     npc_name = get_active_profile()["name"]
     weapon = WEAPONS.get(st.session_state.weapon, WEAPONS["練習長劍"])
     armor = ARMORS.get(st.session_state.armor, ARMORS["旅人斗篷"])
+    reward_reduction = get_inventory_damage_reduction()
+    reward_names = "、".join(
+        reward["name"] for reward in get_inventory_rewards()
+    )
     combat_active = (
         st.session_state.npc_hp < 100 or st.session_state.player_hp < 100
     )
@@ -760,6 +831,12 @@ def resolve_combat(threat_level, player_turn="talk", action_result=""):
                 f"{st.session_state.armor}：{npc_damage}→{reduced_damage}"
             )
             npc_damage = reduced_damage
+        if reward_reduction:
+            reduced_damage = max(1, npc_damage - reward_reduction)
+            damage_notes.append(
+                f"任務獎勵（{reward_names}）：{npc_damage}→{reduced_damage}"
+            )
+            npc_damage = reduced_damage
         if damage_notes:
             combat_lines.append("🛡️ " + "；".join(damage_notes) + "。")
         st.session_state.player_hp = max(
@@ -812,6 +889,7 @@ def create_ai_decision(player_message, relationship_intent):
 - 玩家生命值：{st.session_state.player_hp} / 100
 - 玩家武器：{st.session_state.weapon}，額外攻擊傷害 +{WEAPONS[st.session_state.weapon]["attack_bonus"]}
 - 玩家防具：{st.session_state.armor}，每次受到傷害 -{ARMORS[st.session_state.armor]["damage_reduction"]}
+- 任務獎勵額外減傷：-{get_inventory_damage_reduction()}
 - 戰鬥回合：{st.session_state.battle_turn}
 - 重擊冷卻：{st.session_state.skill_cooldown} 個行動（0 代表可使用）
 
@@ -967,6 +1045,19 @@ with st.sidebar:
     )
 
     st.divider()
+    st.subheader("玩家背包")
+    inventory_rewards = get_inventory_rewards()
+    if inventory_rewards:
+        for reward in inventory_rewards:
+            st.write(f"{reward['icon']} {reward['name']}")
+            st.caption(reward["description"])
+        st.caption(
+            f"🛡️ 任務獎勵總減傷：-{get_inventory_damage_reduction()}"
+        )
+    else:
+        st.caption("背包目前沒有任務獎勵。完成合作結局即可獲得專屬道具。")
+
+    st.divider()
     st.subheader("關係與任務")
 
     if st.session_state.affinity >= 60:
@@ -1003,7 +1094,7 @@ with st.sidebar:
     else:
         st.caption(f"先取得{profile['name']}的信任，再從對話框上方選擇劇情行動。")
 
-    if st.button(f"清除{profile['name']}的對話並重置"):
+    if st.button(f"清除{profile['name']}的對話並重置遊戲"):
         st.session_state.messages = []
         st.session_state.emotion = profile["initial_emotion"]
         st.session_state.action = profile["initial_action"]
@@ -1016,6 +1107,7 @@ with st.sidebar:
         st.session_state.potions = 3
         st.session_state.weapon = "練習長劍"
         st.session_state.armor = "旅人斗篷"
+        st.session_state.inventory = []
         st.session_state.battle_turn = 0
         st.session_state.skill_cooldown = 0
         st.session_state.story_stage = profile["story"]["intro"]
