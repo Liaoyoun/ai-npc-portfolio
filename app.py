@@ -1,3 +1,4 @@
+import json
 import random
 from typing import Literal
 
@@ -46,6 +47,7 @@ def initialize_state():
         "npc_hp": 100,
         "player_hp": 100,
         "combat_message": "尚未進入戰鬥",
+        "load_notice": "",
     }
 
     for key, value in defaults.items():
@@ -86,6 +88,58 @@ def update_quest():
         st.session_state.quest = "艾琳拒絕與玩家合作"
     else:
         st.session_state.quest = "尚未解鎖"
+
+
+def create_save_data():
+    """整理可攜式 JSON 存檔需要保存的遊戲狀態。"""
+
+    return {
+        "save_version": 1,
+        "messages": st.session_state.messages,
+        "emotion": st.session_state.emotion,
+        "action": st.session_state.action,
+        "affinity": st.session_state.affinity,
+        "quest": st.session_state.quest,
+        "npc_hp": st.session_state.npc_hp,
+        "player_hp": st.session_state.player_hp,
+        "combat_message": st.session_state.combat_message,
+    }
+
+
+def load_save_data(data):
+    """驗證並載入 JSON 存檔，避免錯誤數值破壞遊戲狀態。"""
+
+    if not isinstance(data, dict):
+        raise ValueError("存檔格式不是 JSON 物件")
+
+    messages = data.get("messages", [])
+    if not isinstance(messages, list):
+        raise ValueError("對話記憶格式不正確")
+
+    valid_messages = []
+    for message in messages[-30:]:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        content = message.get("content")
+        if role in {"user", "assistant"} and isinstance(content, str):
+            valid_messages.append({"role": role, "content": content})
+
+    st.session_state.messages = valid_messages
+    st.session_state.emotion = str(data.get("emotion", "平靜 😐"))
+    st.session_state.action = str(data.get("action", "觀察玩家"))
+    st.session_state.affinity = max(-100, min(100, int(data.get("affinity", 0))))
+    st.session_state.npc_hp = max(0, min(100, int(data.get("npc_hp", 100))))
+    st.session_state.player_hp = max(
+        0,
+        min(100, int(data.get("player_hp", 100))),
+    )
+    st.session_state.combat_message = str(
+        data.get("combat_message", "尚未進入戰鬥")
+    )
+    st.session_state.ai_status = "規則模式"
+    st.session_state.connection_warning = False
+    update_quest()
 
 
 def update_affinity_by_rules(player_text):
@@ -362,7 +416,45 @@ with st.sidebar:
         st.session_state.npc_hp = 100
         st.session_state.player_hp = 100
         st.session_state.combat_message = "尚未進入戰鬥"
+        st.session_state.load_notice = ""
         st.rerun()
+
+    st.divider()
+    st.subheader("存檔管理")
+
+    save_json = json.dumps(
+        create_save_data(),
+        ensure_ascii=False,
+        indent=2,
+    )
+    st.download_button(
+        "下載目前存檔",
+        data=save_json,
+        file_name="ai_npc_save.json",
+        mime="application/json",
+        use_container_width=True,
+    )
+
+    uploaded_save = st.file_uploader(
+        "選擇先前的 JSON 存檔",
+        type=["json"],
+    )
+
+    if st.button(
+        "載入選取的存檔",
+        disabled=uploaded_save is None,
+        use_container_width=True,
+    ):
+        try:
+            save_data = json.loads(uploaded_save.getvalue().decode("utf-8"))
+            load_save_data(save_data)
+            st.session_state.load_notice = "存檔載入成功。"
+            st.rerun()
+        except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError):
+            st.session_state.load_notice = "存檔無法讀取，請確認檔案格式。"
+
+    if st.session_state.load_notice:
+        st.info(st.session_state.load_notice)
 
 st.subheader("與艾琳交談")
 
