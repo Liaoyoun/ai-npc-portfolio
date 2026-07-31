@@ -79,6 +79,8 @@ def initialize_state():
         "potions": 3,
         "weapon": "練習長劍",
         "armor": "旅人斗篷",
+        "battle_turn": 0,
+        "skill_cooldown": 0,
         "combat_message": "尚未進入戰鬥",
         "pending_action": None,
         "load_notice": "",
@@ -128,7 +130,7 @@ def create_save_data():
     """整理可攜式 JSON 存檔需要保存的遊戲狀態。"""
 
     return {
-        "save_version": 3,
+        "save_version": 4,
         "messages": st.session_state.messages,
         "emotion": st.session_state.emotion,
         "action": st.session_state.action,
@@ -139,6 +141,8 @@ def create_save_data():
         "potions": st.session_state.potions,
         "weapon": st.session_state.weapon,
         "armor": st.session_state.armor,
+        "battle_turn": st.session_state.battle_turn,
+        "skill_cooldown": st.session_state.skill_cooldown,
         "combat_message": st.session_state.combat_message,
     }
 
@@ -178,6 +182,14 @@ def load_save_data(data):
         saved_weapon if saved_weapon in WEAPONS else "練習長劍"
     )
     st.session_state.armor = saved_armor if saved_armor in ARMORS else "旅人斗篷"
+    st.session_state.battle_turn = max(
+        0,
+        min(99, int(data.get("battle_turn", 0))),
+    )
+    st.session_state.skill_cooldown = max(
+        0,
+        min(2, int(data.get("skill_cooldown", 0))),
+    )
     st.session_state.combat_message = str(
         data.get("combat_message", "尚未進入戰鬥")
     )
@@ -257,22 +269,75 @@ def detect_threat_by_rules(player_text):
 def prepare_player_action(player_turn):
     """先處理玩家按下的遊戲動作，讓 AI 能看見最新生命值。"""
 
+    cooldown_note = ""
+    if (
+        player_turn in {"attack", "defend", "heal"}
+        and st.session_state.skill_cooldown > 0
+    ):
+        st.session_state.skill_cooldown -= 1
+        cooldown_note = (
+            f"⚡ 重擊冷卻中，剩餘 {st.session_state.skill_cooldown} 個行動。"
+        )
+
+    if player_turn == "heavy_attack":
+        if st.session_state.skill_cooldown > 0:
+            return (
+                "⚡ 重擊尚在冷卻，請先進行其他行動。",
+                False,
+            )
+        st.session_state.skill_cooldown = 2
+        return (
+            "⚡ 玩家施展重擊：命中率較低，但傷害更高。"
+            "重擊將冷卻 2 個行動。",
+            True,
+        )
+
     if player_turn == "defend":
-        return "🛡️ 玩家採取防禦姿態，下一次反擊傷害會減半。"
+        return (
+            "\n\n".join(
+                filter(
+                    None,
+                    [
+                        "🛡️ 玩家採取防禦姿態，下一次反擊傷害會減半。",
+                        cooldown_note,
+                    ],
+                )
+            ),
+            True,
+        )
 
     if player_turn != "heal":
-        return ""
+        return cooldown_note, True
 
     if st.session_state.potions <= 0:
-        return "🩹 治療藥水已用完。"
+        return "\n\n".join(filter(None, ["🩹 治療藥水已用完。", cooldown_note])), True
 
     if st.session_state.player_hp >= 100:
-        return "🩹 玩家生命值已滿，不需要使用治療藥水。"
+        return (
+            "\n\n".join(
+                filter(
+                    None,
+                    ["🩹 玩家生命值已滿，不需要使用治療藥水。", cooldown_note],
+                )
+            ),
+            True,
+        )
 
     recovered_hp = min(25, 100 - st.session_state.player_hp)
     st.session_state.player_hp += recovered_hp
     st.session_state.potions -= 1
-    return f"🩹 玩家使用治療藥水，恢復 {recovered_hp} 點生命值。"
+    return (
+        "\n\n".join(
+            filter(
+                None,
+                [
+                    f"🩹 玩家使用治療藥水，恢復 {recovered_hp} 點生命值。",
+                    cooldown_note,
+                ],
+            )
+        ),
+        True,
+    )
 
 
 def resolve_combat(threat_level, player_turn="talk", action_result=""):
@@ -301,19 +366,34 @@ def resolve_combat(threat_level, player_turn="talk", action_result=""):
     if st.session_state.player_hp <= 0:
         return "⚔️ 玩家已失去戰鬥能力。請重置遊戲。"
 
-    # 玩家有 70% 機率命中；武器會提高 8～18 點的基礎傷害。
-    if random.randint(1, 100) <= 70:
-        player_damage = random.randint(8, 18) + weapon["attack_bonus"]
-        st.session_state.npc_hp = max(
-            0,
-            st.session_state.npc_hp - player_damage,
-        )
-        combat_lines.append(
-            f"⚔️ 玩家使用{st.session_state.weapon}命中艾琳，造成 "
-            f"{player_damage} 點傷害。"
-        )
+    st.session_state.battle_turn += 1
+    combat_lines.append(f"⚔️ 戰鬥第 {st.session_state.battle_turn} 回合。")
+
+    # 重擊命中率較低但傷害較高；普通攻擊則較穩定。
+    if player_attacks:
+        if player_turn == "heavy_attack":
+            hit_chance = 50
+            base_damage = random.randint(18, 30)
+            attack_name = "⚡ 重擊"
+        else:
+            hit_chance = 70
+            base_damage = random.randint(8, 18)
+            attack_name = "⚔️ 攻擊"
+
+        if random.randint(1, 100) <= hit_chance:
+            player_damage = base_damage + weapon["attack_bonus"]
+            st.session_state.npc_hp = max(
+                0,
+                st.session_state.npc_hp - player_damage,
+            )
+            combat_lines.append(
+                f"{attack_name}命中！玩家使用{st.session_state.weapon}對艾琳造成 "
+                f"{player_damage} 點傷害。"
+            )
+        else:
+            combat_lines.append(f"{attack_name}落空，艾琳避開了攻擊。")
     else:
-        combat_lines.append("⚔️ 艾琳避開了玩家的攻擊。")
+        combat_lines.append("🛡️ 玩家本回合沒有發動攻擊。")
 
     if st.session_state.npc_hp <= 0:
         st.session_state.emotion = "悲傷 😢"
@@ -384,6 +464,8 @@ def create_ai_decision(player_message):
 - 玩家生命值：{st.session_state.player_hp} / 100
 - 玩家武器：{st.session_state.weapon}，額外攻擊傷害 +{WEAPONS[st.session_state.weapon]["attack_bonus"]}
 - 玩家防具：{st.session_state.armor}，每次受到傷害 -{ARMORS[st.session_state.armor]["damage_reduction"]}
+- 戰鬥回合：{st.session_state.battle_turn}
+- 重擊冷卻：{st.session_state.skill_cooldown} 個行動（0 代表可使用）
 
 本輪玩家的最新訊息：
 <latest_player_message>
@@ -479,6 +561,11 @@ with st.sidebar:
     st.write(f"玩家生命值：{st.session_state.player_hp} / 100")
     st.progress(st.session_state.player_hp)
     st.write(f"治療藥水：{st.session_state.potions} 瓶")
+    st.write(f"戰鬥回合：{st.session_state.battle_turn}")
+    if st.session_state.skill_cooldown:
+        st.caption(f"⚡ 重擊冷卻：{st.session_state.skill_cooldown} 個行動")
+    else:
+        st.caption("⚡ 重擊：可使用")
     st.caption(st.session_state.combat_message)
 
     st.divider()
@@ -544,6 +631,8 @@ with st.sidebar:
         st.session_state.potions = 3
         st.session_state.weapon = "練習長劍"
         st.session_state.armor = "旅人斗篷"
+        st.session_state.battle_turn = 0
+        st.session_state.skill_cooldown = 0
         st.session_state.combat_message = "尚未進入戰鬥"
         st.session_state.pending_action = None
         st.session_state.load_notice = ""
@@ -593,7 +682,7 @@ for message in st.session_state.messages:
         st.write(message["content"])
 
 st.caption("遊戲動作：按鈕位於輸入框上方，按下後會自動送出指令。")
-action_col1, action_col2, action_col3 = st.columns(3)
+action_col1, action_col2, action_col3, action_col4 = st.columns(4)
 
 if action_col1.button("⚔️ 攻擊", use_container_width=True):
     st.session_state.pending_action = {
@@ -616,6 +705,20 @@ if action_col3.button("🩹 使用藥水", use_container_width=True):
     }
     st.rerun()
 
+heavy_attack_label = (
+    "⚡ 重擊" if st.session_state.skill_cooldown == 0 else "⚡ 重擊冷卻中"
+)
+if action_col4.button(
+    heavy_attack_label,
+    disabled=st.session_state.skill_cooldown > 0,
+    use_container_width=True,
+):
+    st.session_state.pending_action = {
+        "type": "heavy_attack",
+        "message": "我集中力量，朝艾琳施展重擊。",
+    }
+    st.rerun()
+
 player_message = st.chat_input("輸入你想對艾琳說的話")
 player_turn = "talk"
 
@@ -625,7 +728,7 @@ if st.session_state.pending_action:
     st.session_state.pending_action = None
 
 if player_message:
-    action_result = prepare_player_action(player_turn)
+    action_result, action_is_available = prepare_player_action(player_turn)
     st.session_state.messages.append(
         {
             "role": "user",
@@ -647,7 +750,10 @@ if player_message:
             relationship_change = decision.relationship_change
 
             # 戰鬥屬於遊戲硬規則，避免模型把真正攻擊輕描淡寫。
-            if decision.threat_level == "攻擊" or player_turn == "attack":
+            if decision.threat_level == "攻擊" or (
+                player_turn in {"attack", "heavy_attack"}
+                and action_is_available
+            ):
                 threat_level = "攻擊"
                 final_emotion = "生氣"
                 final_action = "進入戰鬥並反擊玩家"
@@ -676,14 +782,14 @@ if player_message:
         except Exception:
             npc_reply = apply_rule_decision(player_message)
             threat_level = detect_threat_by_rules(player_message)
-            if player_turn == "attack":
+            if player_turn in {"attack", "heavy_attack"} and action_is_available:
                 threat_level = "攻擊"
             st.session_state.ai_status = "規則模式（自動備援）"
             st.session_state.connection_warning = True
     else:
         npc_reply = apply_rule_decision(player_message)
         threat_level = detect_threat_by_rules(player_message)
-        if player_turn == "attack":
+        if player_turn in {"attack", "heavy_attack"} and action_is_available:
             threat_level = "攻擊"
         st.session_state.ai_status = "規則模式"
         st.session_state.connection_warning = False
