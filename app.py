@@ -1,4 +1,5 @@
 import streamlit as st
+from ollama import chat
 
 st.set_page_config(
     page_title="AI NPC 對話系統",
@@ -15,10 +16,48 @@ if "emotion" not in st.session_state:
 if "action" not in st.session_state:
     st.session_state.action = "觀察玩家"
 
+if "ai_status" not in st.session_state:
+    st.session_state.ai_status = "規則模式"
+
+if "connection_warning" not in st.session_state:
+    st.session_state.connection_warning = False
+
+
+def decide_state(player_text):
+    """根據玩家輸入，決定 NPC 的情緒與行為。"""
+
+    text = player_text.lower()
+
+    if any(word in text for word in ["謝謝", "感謝", "幫助", "thank"]):
+        return "開心 😊", "主動協助玩家"
+
+    if any(word in text for word in ["魔法書", "秘密", "線索", "寶藏"]):
+        return "好奇 🤔", "搜尋圖書館紀錄"
+
+    if any(word in text for word in ["攻擊", "殺", "偷", "威脅"]):
+        return "警戒 😠", "保護圖書館"
+
+    return "平靜 😐", "繼續觀察玩家"
+
+
+def create_rule_reply(player_text):
+    """當本機 AI 未啟用或無法連線時，產生備援回覆。"""
+
+    if st.session_state.emotion.startswith("開心"):
+        return "你的善意讓我很高興。告訴我吧，你需要什麼協助？"
+
+    if st.session_state.emotion.startswith("好奇"):
+        return "這件事引起了我的興趣。我會替你搜尋圖書館的古老紀錄。"
+
+    if st.session_state.emotion.startswith("警戒"):
+        return "請立刻停止。身為守護者，我不會允許你危害這座圖書館。"
+
+    return f"我聽見你說「{player_text}」。請繼續說下去。"
+
+
 st.title("🧙 AI NPC 對話系統")
 st.caption("具備角色設定、短期記憶、情緒與行為決策的 MVP")
 
-# 左側角色狀態面板
 with st.sidebar:
     st.header("角色設定")
     st.write("名字：艾琳")
@@ -27,19 +66,38 @@ with st.sidebar:
 
     st.divider()
 
+    use_local_ai = st.toggle(
+        "啟用本機 Qwen3 AI",
+        value=False,
+        help="只在已安裝 Ollama 的本機電腦啟用。",
+    )
+
+    if use_local_ai:
+        st.caption("🟢 本機 AI 模式")
+    else:
+        st.caption("🟡 規則模式")
+
+    if st.session_state.connection_warning:
+        st.warning("無法連接本機 Ollama，已自動使用規則模式。")
+
+    st.divider()
+
     st.subheader("即時狀態")
     st.write(f"目前情緒：{st.session_state.emotion}")
     st.write(f"目前行為：{st.session_state.action}")
+    st.write(f"回覆來源：{st.session_state.ai_status}")
 
     if st.button("清除對話並重置"):
         st.session_state.messages = []
         st.session_state.emotion = "平靜 😐"
         st.session_state.action = "觀察玩家"
+        st.session_state.ai_status = "規則模式"
+        st.session_state.connection_warning = False
         st.rerun()
 
 st.subheader("與艾琳交談")
 
-# 顯示記憶中的對話
+# 顯示短期記憶中的對話
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.write(message["content"])
@@ -47,7 +105,12 @@ for message in st.session_state.messages:
 player_message = st.chat_input("輸入你想對艾琳說的話")
 
 if player_message:
-    # 保存玩家訊息
+    # 先根據玩家訊息更新 NPC 狀態
+    emotion, action = decide_state(player_message)
+    st.session_state.emotion = emotion
+    st.session_state.action = action
+
+    # 將玩家訊息保存至短期記憶
     st.session_state.messages.append(
         {
             "role": "user",
@@ -55,40 +118,65 @@ if player_message:
         }
     )
 
-    # 將訊息轉成小寫，方便判斷英文關鍵字
-    text = player_message.lower()
+    npc_reply = ""
 
-    # 根據玩家訊息做出情緒與行為決策
-    if any(word in text for word in ["謝謝", "感謝", "幫助", "thank"]):
-        st.session_state.emotion = "開心 😊"
-        st.session_state.action = "主動協助玩家"
-        npc_reply = "你的善意讓我很高興。告訴我吧，你需要什麼協助？"
+    if use_local_ai:
+        system_prompt = f"""
+你是奇幻王城圖書館的守護者艾琳。
 
-    elif any(word in text for word in ["魔法書", "秘密", "線索", "寶藏"]):
-        st.session_state.emotion = "好奇 🤔"
-        st.session_state.action = "搜尋圖書館紀錄"
-        npc_reply = "這件事引起了我的興趣。我會替你搜尋圖書館的古老紀錄。"
+角色設定：
+- 個性冷靜、謹慎、富有好奇心
+- 使命是保護圖書館，並協助可信任的訪客
+- 目前情緒：{st.session_state.emotion}
+- 目前行為：{st.session_state.action}
 
-    elif any(word in text for word in ["攻擊", "殺", "偷", "威脅"]):
-        st.session_state.emotion = "警戒 😠"
-        st.session_state.action = "保護圖書館"
-        npc_reply = "請立刻停止。身為守護者，我不會允許你危害這座圖書館。"
+回覆規則：
+- 永遠使用繁體中文
+- 保持角色身分，不要說自己是 AI
+- 根據目前情緒與行為回覆
+- 每次回答二到四句
+- 不要顯示思考過程
+"""
+
+        # 只傳送最近八則訊息，避免記憶占用過多 VRAM
+        model_messages = [
+            {
+                "role": "system",
+                "content": system_prompt,
+            }
+        ]
+
+        model_messages.extend(st.session_state.messages[-8:])
+
+        try:
+            with st.spinner("艾琳正在思考……"):
+                response = chat(
+                    model="qwen3:8b",
+                    messages=model_messages,
+                    think=False,
+                    options={
+                        "temperature": 0.8,
+                        "num_predict": 180,
+                    },
+                )
+
+            npc_reply = response.message.content.strip()
+
+            if not npc_reply:
+                raise ValueError("模型沒有產生回覆")
+
+            st.session_state.ai_status = "Qwen3 8B（本機 GPU）"
+            st.session_state.connection_warning = False
+
+        except Exception:
+            npc_reply = create_rule_reply(player_message)
+            st.session_state.ai_status = "規則模式（自動備援）"
+            st.session_state.connection_warning = True
 
     else:
-        st.session_state.emotion = "平靜 😐"
-        st.session_state.action = "繼續觀察玩家"
-        npc_reply = f"我聽見你說「{player_message}」。請繼續說下去。"
-
-    # 在回覆中加入短期記憶資訊
-    player_messages = [
-        message["content"]
-        for message in st.session_state.messages
-        if message["role"] == "user"
-    ]
-
-    if len(player_messages) > 1:
-        previous_message = player_messages[-2]
-        npc_reply += f"\n\n我也記得你上一句說的是：「{previous_message}」。"
+        npc_reply = create_rule_reply(player_message)
+        st.session_state.ai_status = "規則模式"
+        st.session_state.connection_warning = False
 
     # 保存 NPC 回覆
     st.session_state.messages.append(
@@ -98,5 +186,4 @@ if player_message:
         }
     )
 
-    # 重新執行頁面，讓左側狀態立刻更新
     st.rerun()
