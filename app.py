@@ -255,6 +255,8 @@ NPC_STATE_KEYS = (
     "skill_cooldown",
     "story_stage",
     "magic_book_found",
+    "clue_found",
+    "ritual_ready",
     "ending",
     "combat_message",
     "active_event",
@@ -282,6 +284,8 @@ def create_default_npc_state(npc_key):
         "skill_cooldown": 0,
         "story_stage": profile["story"]["intro"],
         "magic_book_found": False,
+        "clue_found": False,
+        "ritual_ready": False,
         "ending": "",
         "combat_message": "尚未進入戰鬥",
         "active_event": None,
@@ -401,6 +405,61 @@ def initialize_state():
     for key, value in st.session_state.npc_states[active_npc].items():
         if key not in st.session_state:
             st.session_state[key] = copy.deepcopy(value)
+
+
+def sync_sidebar_selectors():
+    """在元件建立前，將左側選擇器同步到目前的遊戲狀態。"""
+
+    should_sync = st.session_state.get("selector_sync_needed", False)
+    if should_sync or st.session_state.get("npc_selector") not in NPC_PROFILES:
+        st.session_state.npc_selector = st.session_state.active_npc
+    if should_sync or st.session_state.get("weapon_selector") not in WEAPONS:
+        st.session_state.weapon_selector = st.session_state.weapon
+    if should_sync or st.session_state.get("armor_selector") not in ARMORS:
+        st.session_state.armor_selector = st.session_state.armor
+    if (
+        should_sync
+        or st.session_state.get("ability_build_selector") not in PLAYER_BUILDS
+    ):
+        st.session_state.ability_build_selector = (
+            st.session_state.ability_build
+        )
+    st.session_state.selector_sync_needed = False
+
+
+def on_npc_selector_change():
+    """使用者切換 NPC 時，在同一次重新整理前載入正確的角色狀態。"""
+
+    selected_npc = st.session_state.npc_selector
+    if selected_npc in NPC_PROFILES:
+        switch_active_npc(selected_npc)
+
+
+def on_weapon_selector_change():
+    """第一時間套用玩家選擇的武器。"""
+
+    selected_weapon = st.session_state.weapon_selector
+    if selected_weapon in WEAPONS:
+        st.session_state.weapon = selected_weapon
+
+
+def on_armor_selector_change():
+    """第一時間套用玩家選擇的防具。"""
+
+    selected_armor = st.session_state.armor_selector
+    if selected_armor in ARMORS:
+        st.session_state.armor = selected_armor
+
+
+def on_ability_build_selector_change():
+    """能力試煉尚未開始時，第一時間套用能力背景。"""
+
+    selected_build = st.session_state.ability_build_selector
+    if (
+        not st.session_state.ability_build_locked
+        and selected_build in PLAYER_BUILDS
+    ):
+        st.session_state.ability_build = selected_build
 
 
 def classify_relationship_intent(player_text, player_turn="talk"):
@@ -556,29 +615,68 @@ def update_quest():
         st.session_state.quest = f"結局完成：{st.session_state.ending}"
         return
 
-    if st.session_state.magic_book_found:
-        if st.session_state.affinity >= 60:
+    if not st.session_state.magic_book_found:
+        if st.session_state.affinity >= 20:
             st.session_state.quest = (
-                f"終章任務：與{npc_name}{story['cooperate_label']}"
+                f"第一章：請與{npc_name}一起{story['search_label']}"
             )
+        elif st.session_state.affinity <= -60:
+            st.session_state.quest = f"敵對事件：{npc_name}的追捕令"
         elif st.session_state.affinity <= -20:
-            st.session_state.quest = f"敵對事件：爭奪{item_name}"
+            st.session_state.quest = f"{npc_name}拒絕與玩家合作"
         else:
-            st.session_state.quest = f"第二章：{item_name}等待你的選擇"
+            st.session_state.quest = "第一章：先取得 NPC 的信任"
+        return
+
+    if not st.session_state.clue_found:
+        st.session_state.quest = f"第二章：研究{item_name}的線索"
+        return
+
+    preparation_blocker = get_story_preparation_blocker()
+    if preparation_blocker:
+        st.session_state.quest = f"第三章：{preparation_blocker}"
+        return
+
+    if not st.session_state.ritual_ready:
+        if st.session_state.affinity < 20:
+            st.session_state.quest = "第四章：累積信任後才能共同準備儀式"
+        else:
+            st.session_state.quest = f"第四章：準備{story['cooperate_label']}"
         return
 
     if st.session_state.affinity >= 60:
-        st.session_state.quest = f"盟友任務：{story['search_label']}"
-    elif st.session_state.affinity >= 20:
         st.session_state.quest = (
-            f"任務解鎖：請與{npc_name}一起{story['search_label']}"
+            f"終章任務：與{npc_name}{story['cooperate_label']}"
         )
-    elif st.session_state.affinity <= -60:
-        st.session_state.quest = f"敵對事件：{npc_name}的追捕令"
     elif st.session_state.affinity <= -20:
-        st.session_state.quest = f"{npc_name}拒絕與玩家合作"
+        st.session_state.quest = f"敵對終章：爭奪{item_name}"
     else:
-        st.session_state.quest = "尚未解鎖"
+        st.session_state.quest = "終章：你的關係值將影響最後選擇"
+
+
+def get_story_preparation_blocker():
+    """回傳主線進入儀式準備前尚未完成的必要步驟。"""
+
+    if not st.session_state.magic_book_found:
+        return "尚未找到任務核心"
+    if not st.session_state.clue_found:
+        return "尚未完成線索調查"
+
+    event_total = len(NPC_EVENTS[st.session_state.active_npc])
+    if len(st.session_state.completed_events) < event_total:
+        return f"尚有 {event_total - len(st.session_state.completed_events)} 個隨機事件未解決"
+
+    required_trials = [
+        trial_id
+        for trial_id, trial in ABILITY_TRIALS.items()
+        if trial["npc"] == st.session_state.active_npc
+    ]
+    if any(
+        trial_id not in st.session_state.passed_trials
+        for trial_id in required_trials
+    ):
+        return "尚未通過必要的能力試煉"
+    return ""
 
 
 def get_event_by_id(npc_key, event_id):
@@ -754,7 +852,13 @@ def handle_story_action(player_turn):
     item_name = story["item"]
     item_icon = story["item_icon"]
 
-    if player_turn not in {"search_book", "seal_book", "steal_book"}:
+    if player_turn not in {
+        "search_book",
+        "investigate_clue",
+        "prepare_ritual",
+        "seal_book",
+        "steal_book",
+    }:
         return ""
 
     if st.session_state.ending:
@@ -777,9 +881,50 @@ def handle_story_action(player_turn):
         update_quest()
         return f"{item_icon} 你與{npc_name}{story['found_message']}"
 
+    if player_turn == "investigate_clue":
+        if not st.session_state.magic_book_found:
+            return f"{item_icon} 你還沒有找到{item_name}，無從調查線索。"
+        if st.session_state.clue_found:
+            return f"🔎 你已完成{item_name}的線索調查。"
+
+        st.session_state.clue_found = True
+        st.session_state.story_stage = f"第三章：解析{item_name}的線索"
+        st.session_state.emotion = "好奇 🤔"
+        st.session_state.action = f"與玩家推敲{item_name}的古老記錄"
+        update_quest()
+        return (
+            f"🔎 你和{npc_name}花了一段時間比對殘缺記錄，終於理解"
+            f"{item_name}並非能立刻處理。接下來必須先解決周遭事件，"
+            "並完成必要的試煉，才能準備最終儀式。"
+        )
+
+    if player_turn == "prepare_ritual":
+        if not st.session_state.clue_found:
+            return "🕯️ 你還沒有完成線索調查，無法貿然開始儀式。"
+        if st.session_state.ritual_ready:
+            return "🕯️ 儀式材料與符文陣都已準備完成。"
+
+        preparation_blocker = get_story_preparation_blocker()
+        if preparation_blocker:
+            return f"🕯️ 還不能準備儀式：{preparation_blocker}。"
+        if st.session_state.affinity < 20:
+            return f"🕯️ {npc_name}仍不願和你共同準備儀式，先累積更多信任。"
+
+        st.session_state.ritual_ready = True
+        st.session_state.story_stage = f"第四章：{story['cooperate_label']}前的準備"
+        st.session_state.emotion = "平靜 😐"
+        st.session_state.action = f"與玩家佈置{story['cooperate_label']}的儀式陣"
+        update_quest()
+        return (
+            f"🕯️ 你與{npc_name}完成儀式陣的佈置。現在已進入終章，"
+            "但最後要合作完成使命，或反過來奪取力量，仍由你決定。"
+        )
+
     if player_turn == "seal_book":
         if not st.session_state.magic_book_found:
             return f"{item_icon} 你還沒有找到{item_name}，無法繼續任務。"
+        if not st.session_state.ritual_ready:
+            return "🕯️ 儀式尚未準備完成，先依序調查線索與處理必要事項。"
         if st.session_state.affinity < 60:
             return f"{item_icon} {npc_name}{story['cooperate_denied']}"
 
@@ -794,6 +939,8 @@ def handle_story_action(player_turn):
 
     if not st.session_state.magic_book_found:
         return f"{item_icon} 你還沒有找到{item_name}，無法採取敵對行動。"
+    if not st.session_state.ritual_ready:
+        return "🕯️ 你尚未掌握儀式的結構，現在無法奪取其中的力量。"
 
     st.session_state.story_stage = story["hostile_stage"]
     st.session_state.ending = story["hostile_ending"]
@@ -874,6 +1021,8 @@ def normalise_npc_state(raw_state, npc_key):
     state["magic_book_found"] = (
         raw_state.get("magic_book_found") is True
     )
+    state["clue_found"] = raw_state.get("clue_found") is True
+    state["ritual_ready"] = raw_state.get("ritual_ready") is True
     state["ending"] = str(raw_state.get("ending", ""))
     state["combat_message"] = str(
         raw_state.get("combat_message", state["combat_message"])
@@ -966,7 +1115,7 @@ def create_save_data():
         npc_state["pending_action"] = None
 
     return {
-        "save_version": 9,
+        "save_version": 10,
         "active_npc": st.session_state.active_npc,
         "npc_states": npc_states,
         "player_state": {
@@ -1062,6 +1211,7 @@ def load_save_data(data):
         player_state.get("ability_build_locked") is True
     )
 
+    st.session_state.selector_sync_needed = True
     update_quest()
     save_active_npc_state()
 
@@ -1324,6 +1474,8 @@ def create_ai_decision(player_message, relationship_intent):
 - 目前事件：{st.session_state.quest}
 - 劇情章節：{st.session_state.story_stage}
 - 是否已找到{story['item']}：{st.session_state.magic_book_found}
+- 是否完成線索調查：{st.session_state.clue_found}
+- 是否已準備最終儀式：{st.session_state.ritual_ready}
 - 目前結局：{st.session_state.ending or "尚未決定"}
 - 目前隨機事件：{st.session_state.active_event['title'] if st.session_state.active_event else "無"}
 - {profile["name"]}生命值：{st.session_state.npc_hp} / 100
@@ -1393,6 +1545,7 @@ def create_ai_decision(player_message, relationship_intent):
 
 
 initialize_state()
+sync_sidebar_selectors()
 
 st.title("🧙 AI NPC 對話系統")
 st.caption("具備角色設定、短期記憶、情緒、關係與行為決策的 MVP")
@@ -1400,17 +1553,15 @@ st.caption("具備角色設定、短期記憶、情緒、關係與行為決策�
 with st.sidebar:
     st.header("NPC 選擇")
     npc_options = list(NPC_PROFILES)
-    selected_npc = st.selectbox(
+    st.selectbox(
         "目前交談的 NPC",
         npc_options,
-        index=npc_options.index(st.session_state.active_npc),
+        key="npc_selector",
+        on_change=on_npc_selector_change,
         format_func=lambda npc_key: (
             f"{NPC_PROFILES[npc_key]['icon']} {NPC_PROFILES[npc_key]['name']}"
         ),
     )
-    if selected_npc != st.session_state.active_npc:
-        switch_active_npc(selected_npc)
-        st.rerun()
 
     profile = get_active_profile()
     st.header(f"{profile['icon']} 角色設定")
@@ -1463,9 +1614,9 @@ with st.sidebar:
     selected_weapon = st.selectbox(
         "選擇武器",
         weapon_options,
-        index=weapon_options.index(st.session_state.weapon),
+        key="weapon_selector",
+        on_change=on_weapon_selector_change,
     )
-    st.session_state.weapon = selected_weapon
     weapon_stats = WEAPONS[selected_weapon]
     st.caption(
         f"⚔️ 攻擊傷害 +{weapon_stats['attack_bonus']}｜"
@@ -1476,9 +1627,9 @@ with st.sidebar:
     selected_armor = st.selectbox(
         "選擇防具",
         armor_options,
-        index=armor_options.index(st.session_state.armor),
+        key="armor_selector",
+        on_change=on_armor_selector_change,
     )
-    st.session_state.armor = selected_armor
     armor_stats = ARMORS[selected_armor]
     st.caption(
         f"🛡️ 受到傷害 -{armor_stats['damage_reduction']}｜"
@@ -1501,15 +1652,13 @@ with st.sidebar:
     st.divider()
     st.subheader("玩家能力")
     ability_build_options = list(PLAYER_BUILDS)
-    if st.session_state.ability_build not in PLAYER_BUILDS:
-        st.session_state.ability_build = "平衡冒險者"
     selected_build = st.selectbox(
         "本次冒險的能力背景",
         ability_build_options,
-        index=ability_build_options.index(st.session_state.ability_build),
+        key="ability_build_selector",
+        on_change=on_ability_build_selector_change,
         disabled=st.session_state.ability_build_locked,
     )
-    st.session_state.ability_build = selected_build
     active_build = PLAYER_BUILDS[selected_build]
     st.caption(active_build["description"])
     st.write(
@@ -1555,6 +1704,31 @@ with st.sidebar:
             else "尚未找到"
         )
     )
+    event_complete = len(st.session_state.completed_events) == len(
+        NPC_EVENTS[st.session_state.active_npc]
+    )
+    npc_trial_ids = [
+        trial_id
+        for trial_id, trial in ABILITY_TRIALS.items()
+        if trial["npc"] == st.session_state.active_npc
+    ]
+    trial_complete = all(
+        trial_id in st.session_state.passed_trials
+        for trial_id in npc_trial_ids
+    )
+    support_complete = event_complete and trial_complete
+    story_steps = [
+        (st.session_state.affinity >= 20, "取得信任"),
+        (st.session_state.magic_book_found, f"找到{profile['story']['item']}"),
+        (st.session_state.clue_found, "完成線索調查"),
+        (support_complete, "解決必要事件與試煉"),
+        (st.session_state.ritual_ready, "準備最終儀式"),
+        (bool(st.session_state.ending), "完成結局"),
+    ]
+    completed_step_count = sum(done for done, _ in story_steps)
+    st.progress(int(completed_step_count / len(story_steps) * 100))
+    for done, label in story_steps:
+        st.caption(f"{'✅' if done else '⬜'} {label}")
     if st.session_state.ending:
         st.success(f"已達成結局：{st.session_state.ending}")
     else:
@@ -1595,6 +1769,7 @@ with st.sidebar:
         st.session_state.inventory = []
         st.session_state.ability_build = "平衡冒險者"
         st.session_state.ability_build_locked = False
+        st.session_state.selector_sync_needed = True
         st.session_state.load_notice = ""
         st.rerun()
 
@@ -1704,7 +1879,7 @@ if st.session_state.active_npc == barrier_trial["npc"]:
     else:
         st.caption("先完成洛恩的 2 個隨機事件，才能開始理解並穩定結界。")
 
-st.caption("劇情行動：關係值會決定你能走向合作或敵對結局。")
+st.caption("主線任務：依序完成每個步驟，最後再選擇合作或敵對結局。")
 story_col1, story_col2, story_col3 = st.columns(3)
 story_finished = bool(st.session_state.ending)
 story = get_active_profile()["story"]
@@ -1721,8 +1896,40 @@ if story_col1.button(
     st.rerun()
 
 if story_col2.button(
-    f"✨ {story['cooperate_label']}",
-    disabled=not st.session_state.magic_book_found or story_finished,
+    f"🔎 研究{story['item']}線索",
+    disabled=(
+        not st.session_state.magic_book_found
+        or st.session_state.clue_found
+        or story_finished
+    ),
+    use_container_width=True,
+):
+    st.session_state.pending_action = {
+        "type": "investigate_clue",
+        "message": f"我想仔細研究{story['item']}留下的線索與記錄。",
+    }
+    st.rerun()
+
+if story_col3.button(
+    f"🕯️ 準備{story['cooperate_label']}",
+    disabled=(
+        not st.session_state.clue_found
+        or bool(get_story_preparation_blocker())
+        or st.session_state.ritual_ready
+        or story_finished
+    ),
+    use_container_width=True,
+):
+    st.session_state.pending_action = {
+        "type": "prepare_ritual",
+        "message": f"我想與{npc_name}一起準備{story['cooperate_label']}的最終儀式。",
+    }
+    st.rerun()
+
+ending_col1, ending_col2 = st.columns(2)
+if ending_col1.button(
+    f"✨ 最後合作：{story['cooperate_label']}",
+    disabled=not st.session_state.ritual_ready or story_finished,
     use_container_width=True,
 ):
     st.session_state.pending_action = {
@@ -1731,9 +1938,9 @@ if story_col2.button(
     }
     st.rerun()
 
-if story_col3.button(
-    f"💥 {story['hostile_label']}",
-    disabled=not st.session_state.magic_book_found or story_finished,
+if ending_col2.button(
+    f"💥 敵對結局：{story['hostile_label']}",
+    disabled=not st.session_state.ritual_ready or story_finished,
     use_container_width=True,
 ):
     st.session_state.pending_action = {
