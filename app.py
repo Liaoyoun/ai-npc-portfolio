@@ -743,8 +743,8 @@ def handle_ability_check(player_turn):
     )[-5:]
 
     check_summary = (
-        f"🎲 {trial['title']}：1d6（{roll}）+ {stat_name}（{stat_value}）"
-        f" = {total}，難度 {difficulty}。"
+        f"🎲 {trial['title']}：隨機骰出 {roll} 點（骰子範圍是 1～6 點）"
+        f" + {stat_name} {stat_value} 點 = {total} 點；通過門檻是 {difficulty} 點。"
     )
     if success:
         affinity_change = trial["success_affinity"]
@@ -1750,10 +1750,10 @@ with st.sidebar:
         check_icon = "✅" if latest_check["success"] else "❌"
         trial = ABILITY_TRIALS[latest_check["trial_id"]]
         st.caption(
-            f"最近檢定：{check_icon} {trial['title']}｜"
-            f"1d6 {latest_check['roll']} + {latest_check['stat']} "
-            f"{latest_check['stat_value']} = {latest_check['total']} / "
-            f"{latest_check['difficulty']}"
+            f"最近試煉：{check_icon} {trial['title']}｜"
+            f"骰出 {latest_check['roll']} 點 + {latest_check['stat']} "
+            f"{latest_check['stat_value']} 點 = {latest_check['total']} 點；"
+            f"門檻 {latest_check['difficulty']} 點"
         )
 
     if st.button("清除所有進度並重置遊戲"):
@@ -1864,8 +1864,11 @@ if st.session_state.active_npc == barrier_trial["npc"]:
         stats = get_player_stats()
         stat_name = barrier_trial["stat"]
         st.write(
-            f"需求：{stat_name} + 1d6 ≥ {barrier_trial['difficulty']}｜"
-            f"目前 {stat_name}：{stats[stat_name]}"
+            f"通過方式：系統會隨機骰出 1～6 點，再加上你的{stat_name}。"
+        )
+        st.caption(
+            f"目前 {stat_name}：{stats[stat_name]} 點｜"
+            f"通過門檻：{barrier_trial['difficulty']} 點"
         )
         if st.button(
             f"🎲 嘗試穩定結界（{stat_name}）",
